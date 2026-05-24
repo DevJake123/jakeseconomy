@@ -1,0 +1,16 @@
+{
+  "item.jakeseconomy.copper_coin": "Copper Coin",
+  "item.jakeseconomy.silver_coin": "Silver Coin",
+  "item.jakeseconomy.gold_coin": "Gold Coin",
+  "item.jakeseconomy.platinum_coin": "Platinum Coin",
+
+  "item.jakeseconomy.copper_coin_sack": "Sack of Copper Coins",
+  "item.jakeseconomy.silver_coin_sack": "Sack of Silver Coins",
+  "item.jakeseconomy.gold_coin_sack": "Sack of Gold Coins",
+  "item.jakeseconomy.platinum_coin_sack": "Sack of Platinum Coins",
+
+  "itemGroup.jakeseconomy.economy": "Jake's Economy",
+
+  "key.categories.jakeseconomy": "Jake's Economy",
+  "key.jakeseconomy.open_market": "Open Market"
+}

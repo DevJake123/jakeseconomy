@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"},
+    {"item": "jakeseconomy:platinum_coin"}
+  ],
+  "result": {"id": "jakeseconomy:platinum_coin_sack", "count": 1}
+}
