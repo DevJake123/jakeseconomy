@@ -131,4 +131,4 @@ All commands require operator permission level 2.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU Lesser General Public License Version 2.1 — see [LICENSE](LICENSE).
