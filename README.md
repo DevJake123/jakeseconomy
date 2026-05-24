@@ -34,8 +34,7 @@ Players buy and sell items through an in-game market whose prices shift in real 
 | **Achievement locks** | Items can require a specific advancement before trading becomes available |
 | **Transaction history** | Per-player log of every buy, sell, and withdrawal with timestamps |
 | **Sort & search** | A/Z toggle sort and real-time full-text search across all categories |
-| **Price sync** | Prices broadcast to all online clients after each trade — no stale GUI data in multiplayer |
-| **Atomic config saves** | Config written to `.tmp` then renamed — data survives a mid-write crash |
+| **Price sync** | Prices broadcast to all online clients after each trade |
 | **Admin commands** | Balance management, live price overrides, and more via `/jakeseconomy` |
 
 ---
