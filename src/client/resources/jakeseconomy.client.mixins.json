@@ -1,6 +1,6 @@
 {
 	"required": true,
-	"package": "com.github.devjake123.testmod.client.mixin",
+	"package": "com.github.devjake123.jakeseconomy.client.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 	],

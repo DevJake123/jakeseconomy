@@ -3,27 +3,27 @@
 	"id": "jakeseconomy",
 	"version": "${version}",
 	"name": "Jake's Economy",
-	"description": "A dynamic player-driven economy mod with a live market, coin currency, real-time price trends, and achievement-locked items.",
+	"description": "A dynamic player-driven economy mod with a live market, coin currency, real-time price trends, achievement-locked items, and a fully escrow-backed Auction House.",
 	"authors": [
 		"devjake123"
 	],
 	"contact": {
-		"homepage": "https://github.com/devjake123/jakeseconomy",
-		"sources":  "https://github.com/devjake123/jakeseconomy",
-		"issues":   "https://github.com/devjake123/jakeseconomy/issues"
+		"homepage": "https://github.com/DevJake123/jakeseconomy",
+		"sources":  "https://github.com/DevJake123/jakeseconomy/tree/main/src",
+		"issues":   "https://github.com/DevJake123/jakeseconomy/issues"
 	},
 	"license": "LGPL-2.1",
 	"icon": "assets/jakeseconomy/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"com.github.devjake123.testmod.JakesEconomy"
+			"com.github.devjake123.jakeseconomy.JakesEconomy"
 		],
 		"client": [
-			"com.github.devjake123.testmod.client.JakesEconomyClient"
+			"com.github.devjake123.jakeseconomy.client.JakesEconomyClient"
 		],
 		"fabric-datagen": [
-			"com.github.devjake123.testmod.client.JakesEconomyDataGenerator"
+			"com.github.devjake123.jakeseconomy.client.JakesEconomyDataGenerator"
 		]
 	},
 	"mixins": [
