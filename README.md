@@ -2,7 +2,7 @@
 
 A dynamic, player-driven economy mod for **Minecraft 1.21.1** (Fabric).
 
-Players buy and sell items through an in-game market whose prices shift in real time based on supply and demand. Includes a full coin currency system, per-player transaction history, price trend arrows, achievement-locked items, and extensive server-side configuration.
+Players buy and sell items through an in-game market whose prices shift in real time based on supply and demand. Includes a full coin currency system, per-player transaction history, price trend arrows, achievement-locked items, a player-to-player Auction House, and extensive server-side configuration.
 
 ---
 
@@ -28,6 +28,7 @@ Players buy and sell items through an in-game market whose prices shift in real 
 | Feature | Description |
 |---|---|
 | **Live market** | Every buy/sell shifts price up/down logarithmically across the whole server |
+| **Auction House** | List any non-market item as an open auction or Buy It Now; fully escrow-backed |
 | **Coin currency** | Copper → Silver → Gold → Platinum coins and sacks, craftable and droppable in loot chests |
 | **Withdrawal** | Convert virtual balance to physical coins at any time via the Withdraw tab |
 | **Price trends** | ↑/↓/— arrows show whether each item has been rising or falling recently |
@@ -53,6 +54,20 @@ Players buy and sell items through an in-game market whose prices shift in real 
 | Deposit coins | **Right-click** a coin or coin sack while holding it |
 | Sort items | Click the **A / Z** button in the market header to toggle alphabetical order |
 
+### Auction House
+
+| Action | How |
+|---|---|
+| Open Auction House | Open market → click the **Auction House** button in the sidebar |
+| Create a listing | Click **New Listing** → pick item from inventory → set price, duration, type → Confirm |
+| Bid on an auction | Click a listing → enter amount → **Place Bid** (minimum: current top bid + 1%) |
+| Buy It Now | Click a BIN listing → **Buy Now** once to arm, again within 3 s to confirm |
+| Cancel your listing | Click your own listing → **Cancel** (listing fee is not refunded) |
+| Claim winnings/items | Click **Claims** → **Claim All** |
+
+> **Anti-snipe:** bids within the last 2 minutes extend the auction by 2 minutes.  
+> **Escrow:** all currency and items are held server-side — nothing is lost if the server crashes.
+
 ---
 
 ## Configuration
@@ -70,6 +85,10 @@ All files are created in `config/` on first launch and are in simple JSON.
 | `sensitivity` | `2.3`                                                                 | Steepness of price swings                                                            |
 | `deficitLimitPerWindow` | `64`                                                                  | Max items one player can trade per time window. Prevents massive market buyouts.     |
 | `deficitWindowHours` | `1.0`                                                                 | Hours before a player's buy window resets                                            |
+| `antiSnipeExtensionMs` | `120000`                                                            | Ms to extend an auction when a late bid lands (0 = disabled)                         |
+| `minBidIncrementPercent` | `1.0`                                                             | Minimum % a bid must exceed the current top bid                                      |
+| `listingFeePercent` | `1.0`                                                                | Non-refundable listing fee as % of listing price (0 = no fee)                        |
+| `maxListingPrice` | `1000000000000`                                                        | Hard cap on any single listing price                                                 |
 
 ### `jakeseconomy-prices.json`
 
@@ -105,10 +124,11 @@ All commands require operator permission level 2.
 /jakeseconomy give    <player> <amount>                  — add currency to a player
 /jakeseconomy set     <player> <amount>                  — set a player's balance exactly
 /jakeseconomy take    <player> <amount>                  — remove currency from a player
-/jakeseconomy market setprice <item> <price> <category>  — add or update an item's price
-/jakeseconomy market removeprice <item>                  — remove an item from the market
-/jakeseconomy market addcategory <name>                  — create an empty category tab
-/jakeseconomy market price <item>                        — check an item's current live price
+/jakeseconomy market setprice <item> <price> <category> [lockId]  — add or update an item's price; optional achievement lock
+/jakeseconomy market removeprice <item>                           — remove an item from the market
+/jakeseconomy market addcategory <name>                           — create an empty category tab
+/jakeseconomy market setlock <item> <lockId>                      — change an item's achievement lock (0 = remove)
+/jakeseconomy market price <item>                                 — check an item's current live price
 ```
 
 ---
