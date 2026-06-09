@@ -7,9 +7,12 @@ import net.minecraft.server.MinecraftServer;
 /** Checks for expired auctions once per second (every 20 server ticks). */
 public class AuctionExpireScheduler {
 
+    private static boolean registered = false;
     private static int tickCount = 0;
 
     public static void register() {
+        if (registered) return;
+        registered = true;
         ServerTickEvents.END_SERVER_TICK.register(AuctionExpireScheduler::onTick);
     }
 

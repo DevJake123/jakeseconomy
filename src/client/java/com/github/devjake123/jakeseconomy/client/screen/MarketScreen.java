@@ -70,6 +70,12 @@ public class MarketScreen extends Screen {
     private boolean hScrollDragging = false;
     private int hDragStartY, hDragStartOffset, hScrollTrackTop, hScrollTrackH, hScrollThumbH;
 
+    // Balance text bounds — updated each frame so we can detect hover for the tooltip
+    private int balX1, balY1, balX2, balY2;
+
+    // Trend-column hover state — set during renderMarketContent, used to draw tooltip in render()
+    private String trendHoverItemId = null;
+
     // Withdraw state
     private final long[] withdrawAmounts = new long[8];
     private int editingCoinIndex = -1;          // which row is being typed into (-1 = none)
@@ -234,6 +240,7 @@ public class MarketScreen extends Screen {
         // Content area
         int contentX = guiLeft + SIDEBAR_W + 2;
         int contentW = panelWidth - SIDEBAR_W - 2;
+        trendHoverItemId = null;   // reset each frame; set inside renderMarketContent
         switch (navMode) {
             case MARKET   -> renderMarketContent(graphics, mouseX, mouseY, contentX, contentW);
             case WITHDRAW -> renderWithdrawContent(graphics, mouseX, mouseY, contentX, contentW);
@@ -246,6 +253,21 @@ public class MarketScreen extends Screen {
         graphics.fill(guiLeft + panelWidth - 16, guiTop + 2, guiLeft + panelWidth - 2, guiTop + 14,
                 closeHover ? 0xFF8B0000 : 0xFF550000);
         graphics.drawString(font, "X", guiLeft + panelWidth - 12, guiTop + 4, 0xFFFFFFFF);
+
+        // Balance hover tooltip — show the full unsimplified amount when hovering the balance label
+        long rawBalance = ClientBalanceCache.get();
+        if (rawBalance >= 1_000 && mouseX >= balX1 && mouseX <= balX2 && mouseY >= balY1 && mouseY <= balY2) {
+            graphics.renderTooltip(font,
+                    Component.literal(CurrencyFormatter.format(rawBalance, false)),
+                    mouseX, mouseY);
+        }
+
+        // Trend arrow hover tooltip — shown when hovering the clickable trend column in the market list
+        if (trendHoverItemId != null) {
+            graphics.renderTooltip(font,
+                    Component.literal("\u25B6 Click for price graph"),
+                    mouseX, mouseY);
+        }
 
         super.render(graphics, mouseX, mouseY, delta);
     }
@@ -273,7 +295,11 @@ public class MarketScreen extends Screen {
         String headerTitle = isSearching ? "Search" : (activeCategory != null ? activeCategory : "Market");
         g.drawString(font, headerTitle, contentX + 4, guiTop + 5, 0xFFFFAA00);
         String balStr = CurrencyFormatter.format(ClientBalanceCache.get(), true);
-        g.drawString(font, balStr, contentX + contentW - font.width(balStr) - 20, guiTop + 5, 0xFF88FF88);
+        int balTextX = contentX + contentW - font.width(balStr) - 20;
+        g.drawString(font, balStr, balTextX, guiTop + 5, 0xFF88FF88);
+        // Store balance bounds for the hover tooltip in render()
+        balX1 = balTextX - 2;  balY1 = guiTop + 3;
+        balX2 = balTextX + font.width(balStr) + 2;  balY2 = guiTop + 14;
 
         // Search box — anchored between header title and balance
         int titleEnd  = contentX + 4 + font.width(headerTitle) + 6;
@@ -324,7 +350,8 @@ public class MarketScreen extends Screen {
         // Column label "Item" shifted right 6 px to clear the sort button
         g.drawString(font, "Item",  contentX + 4 + iconColW + 6,  listTop, 0xFFCCCCCC);
         g.drawString(font, "Price", contentX + contentW - 110,     listTop, 0xFFCCCCCC);
-        g.drawString(font, "Trend", contentX + contentW - 50,      listTop, 0xFFCCCCCC);
+        // "Trend" header — small chart hint so it's clear this column is clickable
+        g.drawString(font, "Trend \u25B2", contentX + contentW - 55, listTop, 0xFF888888);
         // If searching, show a "Category" label cue on the far left
         if (isSearching) g.drawString(font, "Tab", contentX + contentW - 155, listTop, 0xFF777777);
         g.fill(contentX + 2, listTop + 10, contentX + contentW - 2, listTop + 11, 0xFF444444);
@@ -370,6 +397,13 @@ public class MarketScreen extends Screen {
                     && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
             if (hovered) g.fill(contentX + 2, rowY, contentX + contentW - 10, rowY + ROW_HEIGHT, 0x33FFFFFF);
 
+            // Trend zone: rightmost ~60 px of the clickable row — clicking opens the price graph.
+            // Track hover to highlight the zone and show a tooltip in render().
+            int trendZoneX = contentX + contentW - 62;
+            boolean trendZoneHovered = !isLocked
+                    && mouseX >= trendZoneX && mouseX <= contentX + contentW - 10
+                    && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
+
             // Item icon badge — always rendered so players can recognise locked items
             g.fill(contentX + 2, rowY + 2, contentX + 2 + 14, rowY + ROW_HEIGHT - 2, 0xFF1A1A1A);
             ResourceLocation rl = ResourceLocation.tryParse(itemId);
@@ -402,7 +436,15 @@ public class MarketScreen extends Screen {
 
                 g.drawString(font, displayName,                               contentX + 4 + iconColW + 6, rowY + 4, 0xFFFFFFFF);
                 g.drawString(font, CurrencyFormatter.format(livePrice, true), contentX + contentW - 110, rowY + 4, 0xFFFFDD55);
-                g.drawString(font, trend,                                     contentX + contentW - 50,  rowY + 4, trendColor);
+
+                // Trend zone — highlight background and brighten arrow when hovered
+                if (trendZoneHovered) {
+                    g.fill(trendZoneX, rowY + 1, contentX + contentW - 10, rowY + ROW_HEIGHT - 1, 0x44FFFFFF);
+                    trendHoverItemId = itemId;
+                }
+                // Draw a tiny chart icon beside the arrow to signal it's interactive
+                int trendX = contentX + contentW - 50;
+                g.drawString(font, trend, trendX, rowY + 4, trendZoneHovered ? 0xFFFFFFFF : trendColor);
             }
 
             // In search mode, show a small category badge on the right
@@ -448,7 +490,11 @@ public class MarketScreen extends Screen {
         // Title + balance
         g.drawString(font, "Withdraw to Coins", contentX + 4, guiTop + 6, 0xFFFFAA00);
         String balStr = CurrencyFormatter.format(ClientBalanceCache.get(), true);
-        g.drawString(font, balStr, contentX + contentW - font.width(balStr) - 20, guiTop + 6, 0xFF88FF88);
+        int balTextX = contentX + contentW - font.width(balStr) - 20;
+        g.drawString(font, balStr, balTextX, guiTop + 6, 0xFF88FF88);
+        // Store balance bounds for the hover tooltip in render()
+        balX1 = balTextX - 2;  balY1 = guiTop + 4;
+        balX2 = balTextX + font.width(balStr) + 2;  balY2 = guiTop + 15;
 
         int downX = wdDownX(contentX, contentW);
         int amtX  = downX + WD_ARROW_W + 2;
@@ -518,6 +564,8 @@ public class MarketScreen extends Screen {
     private void renderHistoryContent(GuiGraphics g, int mouseX, int mouseY, int contentX, int contentW) {
         // Title
         g.drawString(font, "Transaction History", contentX + 4, guiTop + 6, 0xFFFFAA00);
+        // History has no balance display — clear the bounds so the tooltip never fires here
+        balX1 = balY1 = balX2 = balY2 = 0;
 
         List<TransactionEntry> history = ClientTransactionHistoryCache.get();
 
@@ -722,19 +770,31 @@ public class MarketScreen extends Screen {
         int endIndex = Math.min(scrollOffset + marketMaxVisible, visibleItems.size());
         for (int i = scrollOffset; i < endIndex; i++) {
             if (rowY + ROW_HEIGHT > rowsBottom) break;
-            if (mouseX >= contentX + 2 && mouseX <= contentX + contentW - 10
-                    && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT) {
-                // Silently absorb clicks on locked items — nothing to open
+            if (mouseY >= rowY && mouseY < rowY + ROW_HEIGHT) {
+                // Silently absorb clicks on locked items
                 if (ClientAdvancementLockCache.isLocked(visibleItems.get(i).getValue().achievementLock)) {
-                    return true;
+                    if (mouseX >= contentX + 2 && mouseX <= contentX + contentW - 10) return true;
+                    rowY += ROW_HEIGHT;
+                    continue;
                 }
                 // If this row came from a cross-tab search, swap to its tab first
                 String itemCat = visibleItemCategories.size() > i ? visibleItemCategories.get(i) : null;
-                if (itemCat != null) {
-                    activeCategory = itemCat;
+                String itemId  = visibleItems.get(i).getKey();
+
+                // Trend zone (rightmost ~60 px) → open price graph
+                int trendZoneX = contentX + contentW - 62;
+                if (mouseX >= trendZoneX && mouseX <= contentX + contentW - 10) {
+                    String displayName = ItemDisplayHelper.getDisplayName(itemId);
+                    if (minecraft != null) minecraft.setScreen(new MarketGraphScreen(itemId, displayName, this));
+                    return true;
                 }
-                if (minecraft != null) minecraft.setScreen(new MarketItemScreen(visibleItems.get(i).getKey(), this));
-                return true;
+
+                // Rest of the row → open item detail screen
+                if (mouseX >= contentX + 2 && mouseX < trendZoneX) {
+                    if (itemCat != null) activeCategory = itemCat;
+                    if (minecraft != null) minecraft.setScreen(new MarketItemScreen(itemId, this));
+                    return true;
+                }
             }
             rowY += ROW_HEIGHT;
         }

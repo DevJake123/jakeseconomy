@@ -8,6 +8,7 @@ import com.github.devjake123.jakeseconomy.economy.EconomyState;
 import com.github.devjake123.jakeseconomy.economy.MarketManager;
 import com.github.devjake123.jakeseconomy.economy.auction.AuctionState;
 import com.github.devjake123.jakeseconomy.economy.PriceDecayScheduler;
+import com.github.devjake123.jakeseconomy.economy.PriceHistoryScheduler;
 import com.github.devjake123.jakeseconomy.economy.TrendSnapshotScheduler;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyCoinHandler;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyItemGroup;
@@ -56,6 +57,9 @@ public class JakesEconomy implements ModInitializer {
 
 		// Register trend snapshot tick listener (fires every 3 minutes)
 		TrendSnapshotScheduler.register();
+
+		// Register hourly price history snapshot scheduler (for trend graph)
+		PriceHistoryScheduler.register();
 
 		// Register auction expiry checker (fires every second)
 		AuctionExpireScheduler.register();

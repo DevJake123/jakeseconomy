@@ -1,6 +1,10 @@
 package com.github.devjake123.jakeseconomy.economy.auction;
 
 import com.github.devjake123.jakeseconomy.JakesEconomy;
+import com.github.devjake123.jakeseconomy.api.EconomyApiEvents;
+import com.github.devjake123.jakeseconomy.api.event.AuctionBidPlacedEvent;
+import com.github.devjake123.jakeseconomy.api.event.AuctionCancelledEvent;
+import com.github.devjake123.jakeseconomy.api.event.AuctionFinalizedEvent;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyConfigManager;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyServerConfig;
 import com.github.devjake123.jakeseconomy.economy.AuctionEntry;
@@ -21,7 +25,7 @@ import java.util.*;
 /**
  * Server-side singleton that handles all auction business logic:
  *   - Creating auctions (removes item from inventory, persists to AuctionState)
- *   - Placing bids (1% minimum increment, anti-snipe extension, instant previous-bidder refund)
+ *   - Placing bids (configurable % minimum increment, anti-snipe extension, instant previous-bidder refund)
  *   - BIN (instant buy)
  *   - Cancelling (seller only, refunds current top bidder, returns item to seller escrow)
  *   - Finalizing (on expiry — item to winner escrow, proceeds to seller escrow)
@@ -190,7 +194,7 @@ public class AuctionManager {
     /**
      * Places a bid on an open auction.
      * Rules:
-     *   - Bid must be >= topBid + max(1, ceil(topBid * 0.01))
+     *   - Bid must be >= topBid + max(1, ceil(topBid * minBidIncrementPercent/100))
      *   - Player must have sufficient balance
      *   - Previous top bidder is immediately refunded to their escrow
      *   - If bid arrives within the anti-snipe window, the expiry is extended
@@ -220,16 +224,18 @@ public class AuctionManager {
             return;
         }
 
-        // 1% minimum increment
+        // Minimum bid increment — reads from server config so admins can tune it
+        JakesEconomyServerConfig config = JakesEconomyConfigManager.getServer();
+        double incrementPct = Math.max(0.001, config.minBidIncrementPercent / 100.0);
         long currentTop   = auction.getTopBid();
-        long minIncrement = Math.max(1L, (long) Math.ceil(currentTop * 0.01));
+        long minIncrement = Math.max(1L, (long) Math.ceil(currentTop * incrementPct));
         long minBid       = currentTop + minIncrement;
 
         if (bidAmount < minBid) {
             player.sendSystemMessage(Component.literal(
                     "Minimum bid is " + CurrencyFormatter.format(minBid, true) +
                     " — increment: " + CurrencyFormatter.format(minIncrement, true) +
-                    " (1% of current bid)."));
+                    " (" + config.minBidIncrementPercent + "% of current bid)."));
             return;
         }
 
@@ -247,24 +253,27 @@ public class AuctionManager {
         long prevTopAmount = auction.getTopBid();
         if (prevTopBidder != null) {
             state.addPendingPayout(prevTopBidder, prevTopAmount);
-            // Notify previous leader if online
+            // Notify previous leader if online; queue if offline
+            double nextIncrementPct = Math.max(0.001, config.minBidIncrementPercent / 100.0);
+            long nextMin = bidAmount + Math.max(1L, (long) Math.ceil(bidAmount * nextIncrementPct));
+            String outbidMsg = "Your bid on " + MarketManager.friendlyName(auction.itemId)
+                    + " was outbid! Your " + CurrencyFormatter.format(prevTopAmount, true)
+                    + " has been refunded. Minimum to retake the lead: "
+                    + CurrencyFormatter.format(nextMin, true) + ".";
             ServerPlayer prevPlayer = server.getPlayerList().getPlayer(prevTopBidder);
             if (prevPlayer != null) {
-                long nextMin = bidAmount + Math.max(1L, (long) Math.ceil(bidAmount * 0.01));
-                prevPlayer.sendSystemMessage(Component.literal(
-                        "Your bid on " + MarketManager.friendlyName(auction.itemId) +
-                        " was outbid! Your " + CurrencyFormatter.format(prevTopAmount, true) +
-                        " has been refunded. Minimum to retake the lead: " +
-                        CurrencyFormatter.format(nextMin, true) + "."));
+                prevPlayer.sendSystemMessage(Component.literal(outbidMsg));
+            } else {
+                state.addPendingNotification(prevTopBidder, outbidMsg);
             }
         }
 
-        // Deduct the new bid from new bidder's wallet
+        // Deduct the new bid from new bidder's wallet and sync their HUD immediately
         economy.withdraw(player.getUUID(), bidAmount);
+        EconomyState.syncBalance(player, server);
         auction.bids.add(new BidEntry(player.getUUID(), bidAmount, now));
 
         // Anti-snipe: extend if bid arrives within the configured window
-        JakesEconomyServerConfig config = JakesEconomyConfigManager.getServer();
         long timeLeft = auction.endTimeEpochMs - now;
         boolean extended = false;
         if (timeLeft < config.antiSnipeExtensionMs) {
@@ -278,6 +287,10 @@ public class AuctionManager {
                 "Bid of " + CurrencyFormatter.format(bidAmount, true) +
                 " placed on " + MarketManager.friendlyName(auction.itemId) + "." +
                 (extended ? " (Auction extended — anti-snipe triggered.)" : "")));
+
+        // Fire API event for downstream mods
+        EconomyApiEvents.AUCTION_BID_PLACED.invoker().onAuctionBidPlaced(
+                new AuctionBidPlacedEvent(auctionId, player.getUUID(), bidAmount, auction.itemId, extended));
 
         JakesEconomy.LOGGER.info("[Auction] {} bid {} on auction {} ({}){}.",
                 player.getName().getString(), bidAmount, auctionId,
@@ -308,6 +321,16 @@ public class AuctionManager {
             return;
         }
 
+        // Expiry guard — a BIN listing may have passed its end time between
+        // the tick loop's last scan and the moment the packet arrived.
+        long now = System.currentTimeMillis();
+        if (auction.endTimeEpochMs <= now) {
+            player.sendSystemMessage(Component.literal("This listing has already expired."));
+            finalizeInternal(auction, state, server);
+            state.setDirty();
+            return;
+        }
+
         EconomyState economy = EconomyState.get(server);
         if (economy.getBalance(player.getUUID()) < auction.startingPrice) {
             player.sendSystemMessage(Component.literal(
@@ -316,6 +339,7 @@ public class AuctionManager {
         }
 
         economy.withdraw(player.getUUID(), auction.startingPrice);
+        EconomyState.syncBalance(player, server);  // sync HUD — balance dropped immediately
         // Record as a bid so finalizeInternal sees a winner
         auction.bids.add(new BidEntry(player.getUUID(), auction.startingPrice, System.currentTimeMillis()));
         finalizeInternal(auction, state, server);
@@ -351,13 +375,17 @@ public class AuctionManager {
         state.addPendingItem(auction.sellerId, auction.itemTag);
         // Refund the current top bidder (all others were already refunded when outbid)
         UUID topBidder = auction.getTopBidder();
+        long topBid = 0L;
         if (topBidder != null) {
-            state.addPendingPayout(topBidder, auction.getTopBid());
+            topBid = auction.getTopBid();
+            state.addPendingPayout(topBidder, topBid);
+            String cancelRefundMsg = "The auction for " + MarketManager.friendlyName(auction.itemId)
+                    + " was cancelled. Your bid has been refunded to your claims.";
             ServerPlayer topPlayer = server.getPlayerList().getPlayer(topBidder);
             if (topPlayer != null) {
-                topPlayer.sendSystemMessage(Component.literal(
-                        "The auction for " + MarketManager.friendlyName(auction.itemId) +
-                        " was cancelled. Your bid has been refunded to your claims."));
+                topPlayer.sendSystemMessage(Component.literal(cancelRefundMsg));
+            } else {
+                state.addPendingNotification(topBidder, cancelRefundMsg);
             }
         }
         state.setDirty();
@@ -367,6 +395,10 @@ public class AuctionManager {
         JakesEconomy.LOGGER.info("[Auction] {} cancelled auction {} ({}).",
                 player.getName().getString(), auctionId,
                 MarketManager.friendlyName(auction.itemId));
+
+        // Fire API event for downstream mods
+        EconomyApiEvents.AUCTION_CANCELLED.invoker().onAuctionCancelled(
+                new AuctionCancelledEvent(auctionId, auction.sellerId, auction.itemId, topBidder, topBid));
     }
 
     // ─── Finalize (internal) ─────────────────────────────────────────────────
@@ -387,10 +419,12 @@ public class AuctionManager {
             // No bids — return item to seller
             state.addPendingItem(auction.sellerId, auction.itemTag);
             ServerPlayer seller = server.getPlayerList().getPlayer(auction.sellerId);
+            String noBidMsg = "Your auction for " + MarketManager.friendlyName(auction.itemId)
+                    + " ended with no bids. Your item is ready to claim.";
             if (seller != null) {
-                seller.sendSystemMessage(Component.literal(
-                        "Your auction for " + MarketManager.friendlyName(auction.itemId) +
-                        " ended with no bids. Your item is ready to claim."));
+                seller.sendSystemMessage(Component.literal(noBidMsg));
+            } else {
+                state.addPendingNotification(auction.sellerId, noBidMsg);
             }
         } else {
             // Item → winner escrow, proceeds → seller escrow
@@ -398,19 +432,25 @@ public class AuctionManager {
             state.addPendingPayout(auction.sellerId, winAmount);
 
             ServerPlayer winnerPlayer = server.getPlayerList().getPlayer(winner);
+            String wonMsg = "You won the auction for " + MarketManager.friendlyName(auction.itemId)
+                    + " at " + CurrencyFormatter.format(winAmount, true)
+                    + "! Claim your item in the Auction House.";
             if (winnerPlayer != null) {
-                winnerPlayer.sendSystemMessage(Component.literal(
-                        "You won the auction for " + MarketManager.friendlyName(auction.itemId) +
-                        " at " + CurrencyFormatter.format(winAmount, true) +
-                        "! Claim your item in the Auction House."));
+                winnerPlayer.sendSystemMessage(Component.literal(wonMsg));
+            } else {
+                state.addPendingNotification(winner, wonMsg);
             }
+
             ServerPlayer sellerPlayer = server.getPlayerList().getPlayer(auction.sellerId);
+            String soldMsg = "Your " + MarketManager.friendlyName(auction.itemId)
+                    + " sold for " + CurrencyFormatter.format(winAmount, true)
+                    + "! Claim your earnings in the Auction House.";
             if (sellerPlayer != null) {
-                sellerPlayer.sendSystemMessage(Component.literal(
-                        "Your " + MarketManager.friendlyName(auction.itemId) +
-                        " sold for " + CurrencyFormatter.format(winAmount, true) +
-                        "! Claim your earnings in the Auction House."));
+                sellerPlayer.sendSystemMessage(Component.literal(soldMsg));
+            } else {
+                state.addPendingNotification(auction.sellerId, soldMsg);
             }
+
             // Notify other bidders who lost (they were already refunded when outbid,
             // but they may not know the auction ended)
             Set<UUID> notified = new HashSet<>();
@@ -419,15 +459,22 @@ public class AuctionManager {
             for (int i = auction.bids.size() - 2; i >= 0; i--) {
                 UUID loser = auction.bids.get(i).bidderId();
                 if (notified.add(loser)) {
+                    String lostMsg = "The auction for " + MarketManager.friendlyName(auction.itemId)
+                            + " has ended. You did not win.";
                     ServerPlayer loserPlayer = server.getPlayerList().getPlayer(loser);
                     if (loserPlayer != null) {
-                        loserPlayer.sendSystemMessage(Component.literal(
-                                "The auction for " + MarketManager.friendlyName(auction.itemId) +
-                                " has ended. You did not win."));
+                        loserPlayer.sendSystemMessage(Component.literal(lostMsg));
+                    } else {
+                        state.addPendingNotification(loser, lostMsg);
                     }
                 }
             }
         }
+
+        // Fire API event for downstream mods
+        EconomyApiEvents.AUCTION_FINALIZED.invoker().onAuctionFinalized(
+                new AuctionFinalizedEvent(auction.auctionId, auction.sellerId, winner,
+                        auction.itemId, winner != null ? winAmount : 0L));
     }
 
     // ─── Claim ───────────────────────────────────────────────────────────────
@@ -453,6 +500,7 @@ public class AuctionManager {
 
         // Items — only give what fits; leave the rest in escrow
         List<CompoundTag> items = state.pendingItems.get(playerId);
+        int itemsDelivered = 0;
         if (items != null && !items.isEmpty()) {
             List<CompoundTag> remaining = new ArrayList<>();
             for (CompoundTag itemTag : items) {
@@ -464,6 +512,8 @@ public class AuctionManager {
                 }
                 if (!player.getInventory().add(stack)) {
                     remaining.add(itemTag);
+                } else {
+                    itemsDelivered++;
                 }
             }
             if (remaining.isEmpty()) {
@@ -481,7 +531,7 @@ public class AuctionManager {
             player.sendSystemMessage(Component.literal(
                     "Claimed " + CurrencyFormatter.format(payout, true) + " from the Auction House."));
         }
-        if (items != null && !items.isEmpty()) {
+        if (itemsDelivered > 0) {
             player.sendSystemMessage(Component.literal("Items delivered to your inventory."));
         }
 
@@ -568,9 +618,11 @@ public class AuctionManager {
 
         String safeId          = a.auctionId.toString();
         String safeSellerId    = a.sellerId.toString();
-        String safeSellerName  = esc(sellerName);
-        String safeItemId      = esc(a.itemId);
-        String safeDisplayName = esc(MarketManager.friendlyName(a.itemId));
+        // Use escJson for all user-visible strings — esc() only handles backslash and double-quote,
+        // missing control chars (\n, \t, etc.) that can appear in profile names or modded item names.
+        String safeSellerName  = escJson(sellerName);
+        String safeItemId      = escJson(a.itemId);
+        String safeDisplayName = escJson(MarketManager.friendlyName(a.itemId));
         long   topBid          = a.getTopBid();
         String topBidderId     = a.getTopBidder() != null ? a.getTopBidder().toString() : "";
 
@@ -580,6 +632,9 @@ public class AuctionManager {
         String snbt = "";
         try { snbt = escJson(a.itemTag.getAsString()); } catch (Exception ignored) {}
 
+        // We only send the top bid (topBid + topBidderId fields) — not the full historical bid
+        // list. Historical bids are only needed to refund the previous leader, which the server
+        // handles internally. Sending all bids would transmit unbounded history to every client.
         sb.append("{\"id\":\"").append(safeId).append("\"")
           .append(",\"seller\":\"").append(safeSellerId).append("\"")
           .append(",\"sellerName\":\"").append(safeSellerName).append("\"")
@@ -593,14 +648,7 @@ public class AuctionManager {
           .append(",\"endTime\":").append(a.endTimeEpochMs)
           .append(",\"active\":").append(a.active)
           .append(",\"bidCount\":").append(a.bids.size())
-          .append(",\"bids\":[");
-        for (int i = 0; i < a.bids.size(); i++) {
-            if (i > 0) sb.append(',');
-            BidEntry bid = a.bids.get(i);
-            sb.append("{\"bidder\":\"").append(bid.bidderId())
-              .append("\",\"amt\":").append(bid.amount()).append("}");
-        }
-        sb.append("]}");
+          .append(",\"bids\":[]}");
     }
 
     private static String esc(String s) {

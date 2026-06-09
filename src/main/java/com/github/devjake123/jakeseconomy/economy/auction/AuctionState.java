@@ -18,12 +18,15 @@ import java.util.*;
  *   - Active and recently-finalized auctions (Map<UUID, AuctionEntry>)
  *   - Pending currency payouts per player (Map<UUID, Long>)
  *   - Pending items to give to players (Map<UUID, List<CompoundTag>>)
+ *   - Pending chat notifications for offline players (Map<UUID, List<String>>, capped at 10)
  *
  * Money and items only leave escrow when the player successfully claims them
  */
 public class AuctionState extends SavedData {
 
     private static final String SAVE_KEY = "jakeseconomy_auctions";
+    /** Maximum queued notifications per player — prevents chat-flooding on rejoin. */
+    private static final int MAX_NOTIFICATIONS = 10;
 
     // All auctions — active and finalized-but-unclaimed
     final Map<UUID, AuctionEntry> auctions = new LinkedHashMap<>();
@@ -33,6 +36,9 @@ public class AuctionState extends SavedData {
 
     // Items waiting to be given to players (won items, cancelled seller returns)
     final Map<UUID, List<CompoundTag>> pendingItems = new HashMap<>();
+
+    // Chat notifications queued for offline players — flushed on their next join
+    final Map<UUID, List<String>> pendingNotifications = new HashMap<>();
 
     public AuctionState() {}
 
@@ -54,7 +60,7 @@ public class AuctionState extends SavedData {
         }
     }
 
-    public static AuctionState load(CompoundTag tag, net.minecraft.core.HolderLookup.Provider reg) {
+    static AuctionState load(CompoundTag tag, net.minecraft.core.HolderLookup.Provider reg) {
         AuctionState state = new AuctionState();
 
         // Auctions
@@ -113,6 +119,20 @@ public class AuctionState extends SavedData {
             }
         }
 
+        // Pending notifications
+        CompoundTag notifTag = tag.getCompound("pendingNotifications");
+        for (String key : notifTag.getAllKeys()) {
+            try {
+                UUID playerId = UUID.fromString(key);
+                ListTag msgList = notifTag.getList(key, Tag.TAG_STRING);
+                List<String> msgs = new ArrayList<>();
+                for (int i = 0; i < msgList.size(); i++) msgs.add(msgList.getString(i));
+                state.pendingNotifications.put(playerId, msgs);
+            } catch (Exception e) {
+                JakesEconomy.LOGGER.warn("[Auction] Skipping corrupt pending notifications for '{}'", key);
+            }
+        }
+
         return state;
     }
 
@@ -159,6 +179,15 @@ public class AuctionState extends SavedData {
         }
         tag.put("pendingItems", pendingItemsTag);
 
+        // Pending notifications
+        CompoundTag notifTag = new CompoundTag();
+        for (Map.Entry<UUID, List<String>> entry : pendingNotifications.entrySet()) {
+            ListTag list = new ListTag();
+            for (String msg : entry.getValue()) list.add(net.minecraft.nbt.StringTag.valueOf(msg));
+            notifTag.put(entry.getKey().toString(), list);
+        }
+        tag.put("pendingNotifications", notifTag);
+
         return tag;
     }
 
@@ -173,6 +202,30 @@ public class AuctionState extends SavedData {
     public void addPendingItem(UUID playerId, CompoundTag itemTag) {
         pendingItems.computeIfAbsent(playerId, k -> new ArrayList<>()).add(itemTag);
         setDirty();
+    }
+
+    // ─── Notification helpers ────────────────────────────────────────────────
+
+    /**
+     * Queues a chat notification for a player who is currently offline.
+     * Capped at {@value MAX_NOTIFICATIONS} messages per player to prevent chat-flooding on rejoin.
+     */
+    public void addPendingNotification(UUID playerId, String message) {
+        List<String> msgs = pendingNotifications.computeIfAbsent(playerId, k -> new ArrayList<>());
+        if (msgs.size() < MAX_NOTIFICATIONS) {
+            msgs.add(message);
+            setDirty();
+        }
+    }
+
+    /**
+     * Returns and removes all queued notifications for the given player.
+     * Returns an empty list if there are none.
+     */
+    public List<String> drainNotifications(UUID playerId) {
+        List<String> msgs = pendingNotifications.remove(playerId);
+        if (msgs != null && !msgs.isEmpty()) setDirty();
+        return msgs != null ? msgs : List.of();
     }
 
     /** Returns true if the player has any unclaimed currency or items. */

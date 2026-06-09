@@ -9,6 +9,7 @@ import com.github.devjake123.jakeseconomy.economy.auction.AuctionState;
 import com.github.devjake123.jakeseconomy.economy.EconomyState;
 import com.github.devjake123.jakeseconomy.economy.MarketListing;
 import com.github.devjake123.jakeseconomy.economy.MarketManager;
+import com.github.devjake123.jakeseconomy.economy.PricePoint;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyItems;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
@@ -72,6 +73,7 @@ public class MarketPacketHandler {
         PayloadTypeRegistry.playC2S().register(AuctionClaimPayload.TYPE,           AuctionClaimPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(AuctionBinPayload.TYPE,             AuctionBinPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(AuctionListRequestPayload.TYPE,     AuctionListRequestPayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(PriceHistoryRequestPayload.TYPE,   PriceHistoryRequestPayload.CODEC);
 
         // S2C types
         PayloadTypeRegistry.playS2C().register(BalanceSyncPayload.TYPE,           BalanceSyncPayload.CODEC);
@@ -82,6 +84,7 @@ public class MarketPacketHandler {
         PayloadTypeRegistry.playS2C().register(AuctionListSyncPayload.TYPE,       AuctionListSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AuctionDeltaSyncPayload.TYPE,      AuctionDeltaSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AuctionClaimReadyPayload.TYPE,     AuctionClaimReadyPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(PriceHistoryResponsePayload.TYPE,  PriceHistoryResponsePayload.CODEC);
 
         // Handle incoming buy packet on the server
         ServerPlayNetworking.registerGlobalReceiver(MarketBuyPayload.TYPE, (payload, context) -> {
@@ -127,14 +130,14 @@ public class MarketPacketHandler {
 
                 // Clamp each denomination to [0, MAX_COIN_COUNT] before multiplying
                 // to prevent integer overflow from a maliciously crafted packet.
-                long copper        = Math.max(0, Math.min(payload.copperCoins(),    MAX_COIN_COUNT));
-                long copperSacks   = Math.max(0, Math.min(payload.copperSacks(),    MAX_COIN_COUNT));
-                long silver        = Math.max(0, Math.min(payload.silverCoins(),    MAX_COIN_COUNT));
-                long silverSacks   = Math.max(0, Math.min(payload.silverSacks(),    MAX_COIN_COUNT));
-                long gold          = Math.max(0, Math.min(payload.goldCoins(),      MAX_COIN_COUNT));
-                long goldSacks     = Math.max(0, Math.min(payload.goldSacks(),      MAX_COIN_COUNT));
-                long platinum      = Math.max(0, Math.min(payload.platinumCoins(),  MAX_COIN_COUNT));
-                long platinumSacks = Math.max(0, Math.min(payload.platinumSacks(),  MAX_COIN_COUNT));
+                long copper        = Math.clamp(payload.copperCoins(),    0, MAX_COIN_COUNT);
+                long copperSacks   = Math.clamp(payload.copperSacks(),    0, MAX_COIN_COUNT);
+                long silver        = Math.clamp(payload.silverCoins(),    0, MAX_COIN_COUNT);
+                long silverSacks   = Math.clamp(payload.silverSacks(),    0, MAX_COIN_COUNT);
+                long gold          = Math.clamp(payload.goldCoins(),      0, MAX_COIN_COUNT);
+                long goldSacks     = Math.clamp(payload.goldSacks(),      0, MAX_COIN_COUNT);
+                long platinum      = Math.clamp(payload.platinumCoins(),  0, MAX_COIN_COUNT);
+                long platinumSacks = Math.clamp(payload.platinumSacks(),  0, MAX_COIN_COUNT);
 
                 long totalCost =
                         copper        * JakesEconomyItems.VALUE_COPPER_COIN +
@@ -182,7 +185,7 @@ public class MarketPacketHandler {
                 AuctionManager.get().createAuction(context.player(),
                         payload.inventorySlot(), payload.price(), payload.durationMs(),
                         payload.isBin(), context.server());
-                broadcastAuctionDelta(context.server(), null); // full refresh after new listing
+                broadcastFullAuctionList(context.server()); // full refresh after new listing
                 syncClaimReady(context.server(), context.player());
             });
         });
@@ -249,6 +252,23 @@ public class MarketPacketHandler {
                 })
         );
 
+        // Handle price history request — serialize both recent (20-min) and archive (hourly) tiers
+        ServerPlayNetworking.registerGlobalReceiver(PriceHistoryRequestPayload.TYPE, (payload, context) -> {
+            if (!isValidItemId(payload.itemId())) return;
+            context.server().execute(() -> {
+                EconomyState economy = EconomyState.get(context.server());
+                java.util.List<PricePoint> recent  = economy.getRecentPriceHistory(payload.itemId());
+                java.util.List<PricePoint> archive = economy.getPriceHistory(payload.itemId());
+                StringBuilder sb = new StringBuilder("{\"recent\":");
+                appendPricePointArray(sb, recent);
+                sb.append(",\"archive\":");
+                appendPricePointArray(sb, archive);
+                sb.append('}');
+                ServerPlayNetworking.send(context.player(),
+                        new PriceHistoryResponsePayload(payload.itemId(), sb.toString()));
+            });
+        });
+
         // Send initial auction list + claim state on join
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
                 server.execute(() -> {
@@ -256,10 +276,17 @@ public class MarketPacketHandler {
                     ServerPlayNetworking.send(handler.player,
                             new PriceConfigSyncPayload(JakesEconomyConfigManager.serializePrices()));
                     ServerPlayNetworking.send(handler.player,
-                            new MarketListingSyncPayload(buildFullListingJson(server)));
+                            new MarketListingSyncPayload(buildFullListingJson()));
                     String auctionJson = AuctionManager.get().buildListJson(server, 0, AUCTION_PAGE_SIZE);
                     ServerPlayNetworking.send(handler.player, new AuctionListSyncPayload(auctionJson));
                     syncClaimReady(server, handler.player);
+
+                    // Flush any queued offline auction notifications
+                    java.util.List<String> notifications =
+                            AuctionState.get(server).drainNotifications(handler.player.getUUID());
+                    for (String msg : notifications) {
+                        handler.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(msg));
+                    }
                 })
         );
 
@@ -274,7 +301,7 @@ public class MarketPacketHandler {
         // stay accurate even for players who aren't currently trading.
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             boolean doListingSync = server.getTickCount() % 200 == 0;
-            String fullListingJson = doListingSync ? buildFullListingJson(server) : null;
+            String fullListingJson = doListingSync ? buildFullListingJson() : null;
 
             if (server.getTickCount() % 50 == 0 || doListingSync) {
                 for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -384,7 +411,7 @@ public class MarketPacketHandler {
      * Serialises the full live listing map to JSON so the joining player (or a
      * periodic refresh) gets accurate prices right away.
      */
-    private static String buildFullListingJson(MinecraftServer server) {
+    private static String buildFullListingJson() {
         try {
             var config = JakesEconomyConfigManager.getServer();
             Map<String, MarketListing> listings = MarketManager.get().getListings();
@@ -432,8 +459,8 @@ public class MarketPacketHandler {
         }
     }
 
-    /** Broadcasts a full auction list refresh to all players (used after creates). */
-    private static void broadcastAuctionDelta(MinecraftServer server, Object unused) {
+    /** Broadcasts a full auction list refresh to all players (used after a new listing is created). */
+    private static void broadcastFullAuctionList(MinecraftServer server) {
         try {
             String json = AuctionManager.get().buildListJson(server, 0, AUCTION_PAGE_SIZE);
             AuctionListSyncPayload payload = new AuctionListSyncPayload(json);
@@ -454,6 +481,19 @@ public class MarketPacketHandler {
             JakesEconomy.LOGGER.warn("[Auction] Failed to sync claim-ready for {}: {}",
                     player.getName().getString(), e.getMessage());
         }
+    }
+
+    /** Serialises a list of PricePoints into a JSON array and appends it to {@code sb}. */
+    private static void appendPricePointArray(StringBuilder sb, java.util.List<PricePoint> points) {
+        sb.append('[');
+        for (int i = 0; i < points.size(); i++) {
+            if (i > 0) sb.append(',');
+            PricePoint pt = points.get(i);
+            sb.append("{\"t\":").append(pt.timestamp())
+              .append(",\"p\":").append(pt.price())
+              .append('}');
+        }
+        sb.append(']');
     }
 
 }

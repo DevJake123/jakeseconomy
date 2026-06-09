@@ -19,6 +19,7 @@ public class TrendSnapshotScheduler {
     // 3 minutes × 60 seconds/minute × 20 ticks/second = 3600 ticks
     private static final long SNAPSHOT_INTERVAL_TICKS = 3 * 60 * 20;
 
+    private static boolean registered = false;
     private static long tickCount = 0;
 
     /**
@@ -26,6 +27,8 @@ public class TrendSnapshotScheduler {
      * Called once during mod initialization in JakesEconomy.onInitialize().
      */
     public static void register() {
+        if (registered) return;
+        registered = true;
         ServerTickEvents.END_SERVER_TICK.register(TrendSnapshotScheduler::onTick);
     }
 

@@ -8,6 +8,7 @@ import com.github.devjake123.jakeseconomy.network.AuctionCreatePayload;
 import com.github.devjake123.jakeseconomy.network.AuctionListRequestPayload;
 import com.github.devjake123.jakeseconomy.network.MarketBuyPayload;
 import com.github.devjake123.jakeseconomy.network.MarketSellPayload;
+import com.github.devjake123.jakeseconomy.network.PriceHistoryRequestPayload;
 import com.github.devjake123.jakeseconomy.network.WithdrawPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 
@@ -54,6 +55,11 @@ public class MarketPacketSender {
 
     public static void requestAuctionList(int offset) {
         ClientPlayNetworking.send(new AuctionListRequestPayload(offset));
+    }
+
+    /** Requests the server to send price history for a specific item. */
+    public static void sendPriceHistoryRequest(String itemId) {
+        ClientPlayNetworking.send(new PriceHistoryRequestPayload(itemId));
     }
 }
 

@@ -59,13 +59,10 @@ public final class ClientAuctionCache {
             this.bids          = bids;
         }
 
-        /** Returns this player's current bid amount, or 0 if not bidding. */
+        /** Returns this player's current bid amount, or 0 if not the top bidder.
+         *  The server only sends topBid + topBidderId — historical bids are not transmitted. */
         public long getMyBid(UUID myId) {
-            String myIdStr = myId.toString();
-            // Walk backwards — last bid by this player is their currently held amount
-            for (int i = bids.size() - 1; i >= 0; i--) {
-                if (myIdStr.equals(bids.get(i).bidderId)) return bids.get(i).amount;
-            }
+            if (myId != null && myId.toString().equals(topBidderId)) return topBid;
             return 0;
         }
 

@@ -117,6 +117,7 @@ public class MarketItemScreen extends Screen {
             int    trendColor = ClientMarketListingCache.getTrendColor(itemId);
             graphics.drawString(font, trend, guiLeft + panelWidth / 2 - font.width(trend) / 2, guiTop + 106, trendColor);
 
+
             // SELL (dark red) and BUY (dark green) buttons
             int sellX = guiLeft + panelWidth / 2 - 90;
             int buyX  = guiLeft + panelWidth / 2 + 10;

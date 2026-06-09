@@ -1,6 +1,9 @@
 package com.github.devjake123.jakeseconomy.economy;
 
 import com.github.devjake123.jakeseconomy.JakesEconomy;
+import com.github.devjake123.jakeseconomy.api.EconomyApiEvents;
+import com.github.devjake123.jakeseconomy.api.event.MarketBuyEvent;
+import com.github.devjake123.jakeseconomy.api.event.MarketSellEvent;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyConfigManager;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyPriceConfig;
 import net.minecraft.network.chat.Component;
@@ -81,12 +84,38 @@ public class MarketManager {
 
         JakesEconomy.LOGGER.info("MarketManager initialized with {} tradeable items.", instance.listings.size());
 
+        // Take an initial snapshot for both tiers so the graph has at least one data point immediately.
+        // Subsequent snapshots are taken by PriceHistoryScheduler (recent every 20 min, archive hourly).
+        instance.captureRecentPriceSnapshot(server);
+        instance.captureHourlyPriceSnapshot(server);
     }
 
 
     // ----------------------------
     // Transaction methods
     // ----------------------------
+
+    /**
+     * Returns true if the given player is blocked from trading {@code itemId} by an achievement lock,
+     * and sends them the appropriate chat message. Returns false if trading is allowed.
+     * Extracted from the duplicate lock-check blocks that previously appeared in both buy() and sell().
+     */
+    private boolean isAchievementLocked(ServerPlayer player, String itemId, MinecraftServer server) {
+        JakesEconomyPriceConfig prices = JakesEconomyConfigManager.getPrices();
+        JakesEconomyPriceConfig.ItemPrice itemPrice = prices.allItems().get(itemId);
+        if (itemPrice == null || itemPrice.achievementLock <= 0) return false;
+        JakesEconomyPriceConfig.AchievementLockDef lockDef = prices.achievementLocks.get(itemPrice.achievementLock);
+        if (lockDef == null || lockDef.advancementId.isEmpty()) return false;
+        ResourceLocation advRl = ResourceLocation.tryParse(lockDef.advancementId);
+        if (advRl == null) return false;
+        net.minecraft.advancements.AdvancementHolder holder = server.getAdvancements().get(advRl);
+        if (holder != null && !player.getAdvancements().getOrStartProgress(holder).isDone()) {
+            player.sendSystemMessage(Component.literal(
+                    "Complete \"" + lockDef.displayName + "\" to trade this item."));
+            return true;
+        }
+        return false;
+    }
 
     /** Processes an instant buy transaction.
      * * Deducts the current price × quantity from the player's virtual balance,
@@ -108,24 +137,7 @@ public class MarketManager {
         }
 
         // Achievement lock check — block trade if the player hasn't unlocked this item's gate
-        {
-            JakesEconomyPriceConfig prices = JakesEconomyConfigManager.getPrices();
-            JakesEconomyPriceConfig.ItemPrice itemPrice = prices.allItems().get(itemId);
-            if (itemPrice != null && itemPrice.achievementLock > 0) {
-                JakesEconomyPriceConfig.AchievementLockDef lockDef = prices.achievementLocks.get(itemPrice.achievementLock);
-                if (lockDef != null && !lockDef.advancementId.isEmpty()) {
-                    ResourceLocation advRl = ResourceLocation.tryParse(lockDef.advancementId);
-                    if (advRl != null) {
-                        net.minecraft.advancements.AdvancementHolder holder = server.getAdvancements().get(advRl);
-                        if (holder != null && !player.getAdvancements().getOrStartProgress(holder).isDone()) {
-                            player.sendSystemMessage(Component.literal(
-                                    "Complete \"" + lockDef.displayName + "\" to trade this item."));
-                            return;
-                        }
-                    }
-                }
-            }
-        }
+        if (isAchievementLocked(player, itemId, server)) return;
 
         var config = JakesEconomyConfigManager.getServer();
         EconomyState economy = EconomyState.get(server);
@@ -197,6 +209,8 @@ public class MarketManager {
         economy.addTransaction(player.getUUID(), "BUY", itemId, actualBought, totalCost);
         EconomyState.syncBalance(player, server);
         EconomyState.syncHistory(player, server);
+        EconomyApiEvents.MARKET_BUY.invoker().onMarketBuy(
+                new MarketBuyEvent(player.getUUID(), itemId, actualBought, totalCost));
     }
 
     /* * Processes an instant sell transaction.
@@ -219,24 +233,7 @@ public class MarketManager {
         }
 
         // Achievement lock check — block trade if the player hasn't unlocked this item's gate
-        {
-            JakesEconomyPriceConfig prices = JakesEconomyConfigManager.getPrices();
-            JakesEconomyPriceConfig.ItemPrice itemPrice = prices.allItems().get(itemId);
-            if (itemPrice != null && itemPrice.achievementLock > 0) {
-                JakesEconomyPriceConfig.AchievementLockDef lockDef = prices.achievementLocks.get(itemPrice.achievementLock);
-                if (lockDef != null && !lockDef.advancementId.isEmpty()) {
-                    ResourceLocation advRl = ResourceLocation.tryParse(lockDef.advancementId);
-                    if (advRl != null) {
-                        net.minecraft.advancements.AdvancementHolder holder = server.getAdvancements().get(advRl);
-                        if (holder != null && !player.getAdvancements().getOrStartProgress(holder).isDone()) {
-                            player.sendSystemMessage(Component.literal(
-                                    "Complete \"" + lockDef.displayName + "\" to trade this item."));
-                            return;
-                        }
-                    }
-                }
-            }
-        }
+        if (isAchievementLocked(player, itemId, server)) return;
 
         var config = JakesEconomyConfigManager.getServer();
         EconomyState economy = EconomyState.get(server);
@@ -271,6 +268,7 @@ public class MarketManager {
         economy.recordSellContribution(player.getUUID(), itemId, quantity);
         economy.saveDeficitsFrom(listings);
 
+
         // Record in history and sync to client (no success chat spam)
         economy.addTransaction(player.getUUID(), "SELL", itemId, quantity, totalEarned);
         JakesEconomy.LOGGER.info("[Market] {} sold {}x '{}' for {} (deficit: {} → {}).",
@@ -278,6 +276,8 @@ public class MarketManager {
                 listing.netDeficit + quantity, listing.netDeficit);
         EconomyState.syncBalance(player, server);
         EconomyState.syncHistory(player, server);
+        EconomyApiEvents.MARKET_SELL.invoker().onMarketSell(
+                new MarketSellEvent(player.getUUID(), itemId, quantity, totalEarned));
     }
 
     // ----------------------------
@@ -331,6 +331,40 @@ public class MarketManager {
     }
 
     // ----------------------------
+    // Price History Snapshots (called by PriceHistoryScheduler)
+    // ----------------------------
+
+    /**
+     * Appends the current calculated price of every listed item to the rolling
+     * hourly archive history stored in EconomyState. Called on server start and
+     * then every 60 minutes by PriceHistoryScheduler. Used for Week / Month views.
+     */
+    public void captureHourlyPriceSnapshot(MinecraftServer server) {
+        var config = JakesEconomyConfigManager.getServer();
+        EconomyState economy = EconomyState.get(server);
+        for (Map.Entry<String, MarketListing> e : listings.entrySet()) {
+            economy.recordPriceSnapshot(e.getKey(),
+                    e.getValue().getCurrentPrice(config.marketDepth, config.sensitivity));
+        }
+        JakesEconomy.LOGGER.debug("PriceHistoryScheduler: captured hourly archive snapshot for {} items.", listings.size());
+    }
+
+    /**
+     * Appends the current calculated price of every listed item to the rolling
+     * 20-minute recent history stored in EconomyState. Called on server start and
+     * then every 20 minutes by PriceHistoryScheduler. Used for the Day view.
+     */
+    public void captureRecentPriceSnapshot(MinecraftServer server) {
+        var config = JakesEconomyConfigManager.getServer();
+        EconomyState economy = EconomyState.get(server);
+        for (Map.Entry<String, MarketListing> e : listings.entrySet()) {
+            economy.recordRecentPriceSnapshot(e.getKey(),
+                    e.getValue().getCurrentPrice(config.marketDepth, config.sensitivity));
+        }
+        JakesEconomy.LOGGER.debug("PriceHistoryScheduler: captured 20-min recent snapshot for {} items.", listings.size());
+    }
+
+    // ----------------------------
     // Trend Snapshots (called by TrendSnapshotScheduler)
     // ----------------------------
 
@@ -352,19 +386,19 @@ public class MarketManager {
     // ----------------------------
 
     /**
-     * * Applies price decay to all listings.
-     * * Each item's netDeficit moves closer to 0 by the configured decay rate,
-     * * simulating natural market recovery when trading slows down.
-     * * Only called if priceDecayEnabled = true in server config.
-     * */
+     * Applies price decay to all listings.
+     * Each item's netDeficit moves closer to 0 by the configured decay rate,
+     * simulating natural market recovery when trading slows down.
+     * Only called if priceDecayEnabled = true in server config.
+     */
     public void applyDecay(MinecraftServer server) {
         double decayRate = JakesEconomyConfigManager.getServer().priceDecayRatePercent / 100.0;
         for (MarketListing listing : listings.values()) {
             // Decay toward 0: netDeficit shrinks by decayRate% each interval
             listing.netDeficit = (long)(listing.netDeficit * (1.0 - decayRate));
         }
+        // saveDeficitsFrom calls setDirty() internally — no need to call it again
         EconomyState.get(server).saveDeficitsFrom(listings);
-        EconomyState.get(server).setDirty();
         JakesEconomy.LOGGER.info("Applied market price decay ({} listings affected).", listings.size());
     }
 
@@ -431,7 +465,7 @@ public class MarketManager {
     private void takeItems(ServerPlayer player, String itemId, long quantity) {
         // XP pseudo-item
         if (XP_ITEM_ID.equals(itemId)) {
-            int toTake = (int) Math.min(quantity, Math.max(0, player.totalExperience));
+            int toTake = (int) Math.clamp(quantity, 0, Math.max(0, player.totalExperience));
             if (toTake > 0) player.giveExperiencePoints(-toTake);
             return;
         }
@@ -453,10 +487,6 @@ public class MarketManager {
         }
     }
 
-    /**
-     * Counts how many of the specified item the player currently has across all inventory slots.
-     * Used by sell() to verify the player has enough before proceeding.
-     */
     /** Returns true if the given item ID is configured as a tradeable market item. */
     public boolean isMarketItem(String itemId) {
         return listings.containsKey(itemId);

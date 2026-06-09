@@ -21,14 +21,15 @@ import com.github.devjake123.jakeseconomy.config.JakesEconomyPriceConfig;
 import com.github.devjake123.jakeseconomy.network.PriceConfigSyncPayload;
 
 /**
- * Registers all /jakeseconomy commands using Brigadier (Minecraft's command framework).
+ * Registers all economy commands using Brigadier (Minecraft's command framework).
  *
  * Available commands:
- *   /jakeseconomy balance               — Check your own virtual balance
- *   /jakeseconomy balance <player>      — (Op) Check another player's balance
- *   /jakeseconomy give <player> <amt>   — (Op) Add currency to a player's balance
- *   /jakeseconomy set <player> <amt>    — (Op) Set a player's balance to an exact amount
- *   /jakeseconomy take <player> <amt>   — (Op) Remove currency from a player's balance
+ *   /jecon balance               — Check your own virtual balance
+ *   /jecon balance <player>      — (Op) Check another player's balance
+ *   /jecon give <player> <amt>   — (Op) Add currency to a player's balance
+ *   /jecon set <player> <amt>    — (Op) Set a player's balance to an exact amount
+ *   /jecon take <player> <amt>   — (Op) Remove currency from a player's balance
+ *   /balance                     — Shortcut for /jecon balance (only registered if no other mod claims it)
  *
  * Op commands require permission level 2 (operator).
  * All amounts and balances are displayed using CurrencyFormatter (abbreviated by default).
@@ -41,9 +42,9 @@ public class JakesEconomyCommands {
      * Called once during mod initialization in JakesEconomy.onInitialize().
      */
     public static void register() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(Commands.literal("jakeseconomy")
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(Commands.literal("jecon")
 
-                // /jakeseconomy balance — any player can check their own balance
+                // /jecon balance — any player can check their own balance
                 .then(Commands.literal("balance")
                         .executes(ctx -> {
                             ServerPlayer player = (ServerPlayer) ctx.getSource().getEntityOrException();
@@ -52,7 +53,7 @@ public class JakesEconomyCommands {
                                     "Your balance: " + CurrencyFormatter.format(balance, true)), false);
                             return 1;
                         })
-                        // /jakeseconomy balance <player> — op only, check someone else's balance
+                        // /jecon balance <player> — op only, check someone else's balance
                         .then(Commands.argument("player", EntityArgument.player())
                                 .requires(src -> src.hasPermission(2))
                                 .executes(ctx -> {
@@ -64,7 +65,7 @@ public class JakesEconomyCommands {
                                     return 1;
                                 })))
 
-                // /jakeseconomy give <player> <amount> — op: add currency to a player
+                // /jecon give <player> <amount> — op: add currency to a player
                 .then(Commands.literal("give")
                         .requires(src -> src.hasPermission(2))
                         .then(Commands.argument("player", EntityArgument.player())
@@ -85,7 +86,7 @@ public class JakesEconomyCommands {
                                              return 1;
                                         }))))
 
-                // /jakeseconomy set <player> <amount> — op: set a player's balance exactly
+                // /jecon set <player> <amount> — op: set a player's balance exactly
                 .then(Commands.literal("set")
                         .requires(src -> src.hasPermission(2))
                         .then(Commands.argument("player", EntityArgument.player())
@@ -104,7 +105,7 @@ public class JakesEconomyCommands {
                                              return 1;
                                         }))))
 
-                // /jakeseconomy take <player> <amount> — op: remove currency from a player
+                // /jecon take <player> <amount> — op: remove currency from a player
                 // Note: withdraw() returns false if insufficient funds — the balance floors at 0,
                 // it won't go negative. Consider adding feedback for that case in a future pass.
                 .then(Commands.literal("take")
@@ -114,31 +115,31 @@ public class JakesEconomyCommands {
                                         .executes(ctx -> {
                                             ServerPlayer target = EntityArgument.getPlayer(ctx, "player");
                                             long amount = LongArgumentType.getLong(ctx, "amount");
-                                            EconomyState state3 = EconomyState.get(ctx.getSource().getServer());
-                                            boolean success = state3.withdraw(target.getUUID(), amount);
-                                            EconomyState.syncBalance(target, ctx.getSource().getServer());
-                                            if (success) {
-                                                JakesEconomy.LOGGER.info("[Admin] {} took {} from {}.",
-                                                        ctx.getSource().getTextName(), CurrencyFormatter.format(amount, false), target.getName().getString());
-                                                long newBal3 = state3.getBalance(target.getUUID());
-                                                ctx.getSource().sendSuccess(() -> Component.literal(
-                                                        "Took " + CurrencyFormatter.format(amount, true) +
-                                                        " from " + target.getName().getString() +
-                                                        ". New balance: " + CurrencyFormatter.format(newBal3, true)), false);
-                                            } else {
-                                                long current3 = state3.getBalance(target.getUUID());
-                                                ctx.getSource().sendFailure(Component.literal(
-                                                        target.getName().getString() + " only has " +
-                                                        CurrencyFormatter.format(current3, true) +
-                                                        " — could not take " + CurrencyFormatter.format(amount, true) + "."));
-                                            }
-                                            return success ? 1 : 0;
+                                             EconomyState state3 = EconomyState.get(ctx.getSource().getServer());
+                                             boolean success = state3.withdraw(target.getUUID(), amount);
+                                             if (success) {
+                                                 EconomyState.syncBalance(target, ctx.getSource().getServer());
+                                                 JakesEconomy.LOGGER.info("[Admin] {} took {} from {}.",
+                                                         ctx.getSource().getTextName(), CurrencyFormatter.format(amount, false), target.getName().getString());
+                                                 long newBal3 = state3.getBalance(target.getUUID());
+                                                 ctx.getSource().sendSuccess(() -> Component.literal(
+                                                         "Took " + CurrencyFormatter.format(amount, true) +
+                                                         " from " + target.getName().getString() +
+                                                         ". New balance: " + CurrencyFormatter.format(newBal3, true)), false);
+                                             } else {
+                                                 long current3 = state3.getBalance(target.getUUID());
+                                                 ctx.getSource().sendFailure(Component.literal(
+                                                         target.getName().getString() + " only has " +
+                                                         CurrencyFormatter.format(current3, true) +
+                                                         " — could not take " + CurrencyFormatter.format(amount, true) + "."));
+                                             }
+                                             return success ? 1 : 0;
                                         }))))
 
                 .then(Commands.literal("market")
                         .requires(src -> src.hasPermission(2))
 
-                        // /jakeseconomy market setprice <item> <price> <category> [achievementLock]
+                        // /jecon market setprice <item> <price> <category> [achievementLock]
                         // Adds or updates an item in the market under the given category tab.
                         // Category is created automatically if it doesn't exist.
                         // Skips if the item ID is not a valid registered item.
@@ -189,7 +190,7 @@ public class JakesEconomyCommands {
                                                                     return 1;
                                                                 })))))
 
-                        // /jakeseconomy market addcategory <name>
+                        // /jecon market addcategory <name>
                         // Creates an empty category tab in the price config.
                         // Useful to pre-create a tab before adding items to it.
                         .then(Commands.literal("addcategory")
@@ -211,7 +212,7 @@ public class JakesEconomyCommands {
                                             return 1;
                                         })))
 
-                        // /jakeseconomy market removeprice <item>
+                        // /jecon market removeprice <item>
                         // Removes an item from whichever category it belongs to.
                         .then(Commands.literal("removeprice")
                                 .then(Commands.argument("item", ResourceLocationArgument.id())
@@ -225,7 +226,7 @@ public class JakesEconomyCommands {
                                             return 1;
                                         })))
 
-                        // /jakeseconomy market setlock <item> <lockId>
+                        // /jecon market setlock <item> <lockId>
                         // Sets the achievementLock on an existing market item without changing its price.
                         // lockId 0 = no lock. Changes are saved and synced to all online players immediately.
                         .then(Commands.literal("setlock")
@@ -241,7 +242,7 @@ public class JakesEconomyCommands {
                                                             .findFirst().orElse(null);
                                                     if (found == null) {
                                                         ctx.getSource().sendFailure(Component.literal(
-                                                                item + " is not listed in the market. Use /jakeseconomy market setprice first."));
+                                                                item + " is not listed in the market. Use /jecon market setprice first."));
                                                         return 0;
                                                     }
                                                     found.achievementLock = lockId;
@@ -261,7 +262,7 @@ public class JakesEconomyCommands {
                                                     return 1;
                                                 }))))
 
-                        // /jakeseconomy market price <item>
+                        // /jecon market price <item>
                         // Shows the current market price for an item (accounts for netDeficit).
                         .then(Commands.literal("price")
                                 .then(Commands.argument("item", ResourceLocationArgument.id())
@@ -278,6 +279,103 @@ public class JakesEconomyCommands {
                                             return 1;
                                         }))))
         )));
+
+        // Register /balance as a standalone shortcut — only if no other mod has already claimed it.
+        // /jecon balance always exists regardless.
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            if (dispatcher.getRoot().getChild("balance") != null) {
+                JakesEconomy.LOGGER.info("[Commands] /balance is already registered by another mod — skipping shortcut.");
+                return;
+            }
+            dispatcher.register(Commands.literal("balance")
+                    .executes(ctx -> {
+                        ServerPlayer player = (ServerPlayer) ctx.getSource().getEntityOrException();
+                        long balance = EconomyState.get(ctx.getSource().getServer()).getBalance(player.getUUID());
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                                "Balance: " + CurrencyFormatter.format(balance, true) +
+                                "  (" + CurrencyFormatter.format(balance, false) + ")"), false);
+                        return 1;
+                    }));
+            JakesEconomy.LOGGER.info("[Commands] Registered /balance shortcut.");
+        });
+
+        // /jecon debug fillhistory <item> [hours=720]
+        // Op-only: injects synthetic sinusoidal price history so the graph screen can be
+        // tested without waiting hours for real hourly snapshots to accumulate.
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                dispatcher.register(Commands.literal("jecon")
+                        .then(Commands.literal("debug")
+                                .requires(src -> src.hasPermission(2))
+                                .then(Commands.literal("fillhistory")
+                                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                                // No hours arg — default to full 720 (30 days)
+                                                .executes(ctx -> execFillHistory(
+                                                        ctx.getSource().getServer(),
+                                                        ResourceLocationArgument.getId(ctx, "item"),
+                                                        720,
+                                                        ctx.getSource()))
+                                                // Optional hours override (1 – 720)
+                                                .then(Commands.argument("hours", IntegerArgumentType.integer(1, 720))
+                                                        .executes(ctx -> execFillHistory(
+                                                                ctx.getSource().getServer(),
+                                                                ResourceLocationArgument.getId(ctx, "item"),
+                                                                IntegerArgumentType.getInteger(ctx, "hours"),
+                                                                ctx.getSource()))))))));
+    }
+
+    /**
+     * Injects synthetic price history into both tiers so the graph can be tested
+     * without waiting for real snapshots to accumulate.
+     *
+     * Archive: {@code hours} hourly points (default 720 = 30 days).
+     * Recent:  72 points at 20-minute intervals covering the last 24 h.
+     *
+     * Both use a sinusoidal pattern centred on the item's current live price.
+     */
+    private static int execFillHistory(net.minecraft.server.MinecraftServer server,
+                                       ResourceLocation item,
+                                       int hours,
+                                       net.minecraft.commands.CommandSourceStack source) {
+        double basePrice = MarketManager.get().getCurrentPrice(item.toString());
+        if (basePrice <= 0) {
+            source.sendFailure(Component.literal(item + " is not a listed market item."));
+            return 0;
+        }
+        long now = System.currentTimeMillis();
+        java.util.Random rng = new java.util.Random(0xC0FFEEL); // fixed seed → reproducible graph
+
+        // ── Archive: hourly points ──────────────────────────────────────────────
+        java.util.List<com.github.devjake123.jakeseconomy.economy.PricePoint> archivePoints =
+                new java.util.ArrayList<>(hours);
+        for (int i = 0; i < hours; i++) {
+            long   ts     = now - (long)(hours - i) * 3_600_000L;
+            double weekly = Math.sin(i * 2 * Math.PI / 168.0) * 0.20;
+            double daily  = Math.sin(i * 2 * Math.PI /  24.0) * 0.10;
+            double noise  = (rng.nextDouble() - 0.5)           * 0.08;
+            double price  = Math.max(1.0, basePrice * (1.0 + weekly + daily + noise));
+            archivePoints.add(new com.github.devjake123.jakeseconomy.economy.PricePoint(ts, price));
+        }
+        EconomyState.get(server).injectPriceHistory(item.toString(), archivePoints);
+
+        // ── Recent: 20-min points for the last 24 h (72 points) ────────────────
+        int recentCount = 72;
+        java.util.List<com.github.devjake123.jakeseconomy.economy.PricePoint> recentPoints =
+                new java.util.ArrayList<>(recentCount);
+        java.util.Random rng2 = new java.util.Random(0xBEEFL);
+        for (int i = 0; i < recentCount; i++) {
+            long   ts    = now - (long)(recentCount - i) * 1_200_000L; // 20 min per step
+            double cycle = Math.sin(i * 2 * Math.PI / 72.0) * 0.12;   // ±12 % intraday cycle
+            double noise = (rng2.nextDouble() - 0.5)         * 0.05;   // ±2.5 % noise
+            double price = Math.max(1.0, basePrice * (1.0 + cycle + noise));
+            recentPoints.add(new com.github.devjake123.jakeseconomy.economy.PricePoint(ts, price));
+        }
+        EconomyState.get(server).injectRecentPriceHistory(item.toString(), recentPoints);
+
+        final int finalHours = hours;
+        source.sendSuccess(() -> Component.literal(
+                "[Debug] Injected " + finalHours + "h archive + 24h recent (20-min) test data for "
+                + MarketManager.friendlyName(item.toString()) + ". Open the graph to verify."), true);
+        return 1;
     }
 }
 

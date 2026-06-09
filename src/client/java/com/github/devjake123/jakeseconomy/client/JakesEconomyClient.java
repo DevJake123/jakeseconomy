@@ -10,6 +10,7 @@ import com.github.devjake123.jakeseconomy.network.AuctionListSyncPayload;
 import com.github.devjake123.jakeseconomy.network.BalanceSyncPayload;
 import com.github.devjake123.jakeseconomy.network.MarketListingSyncPayload;
 import com.github.devjake123.jakeseconomy.network.PriceConfigSyncPayload;
+import com.github.devjake123.jakeseconomy.network.PriceHistoryResponsePayload;
 import com.github.devjake123.jakeseconomy.network.TransactionHistoryPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -52,6 +53,7 @@ public class JakesEconomyClient implements ClientModInitializer {
 			ClientAdvancementLockCache.clear();
 			ClientMarketListingCache.clear();
 			ClientAuctionCache.clear();
+			ClientPriceHistoryCache.clear();
 		});
 
 		// Receive the server's price config and apply it so the market GUI shows the correct items
@@ -65,6 +67,11 @@ public class JakesEconomyClient implements ClientModInitializer {
 		// Receive live price + trend data from the server and cache it for the GUI
 		ClientPlayNetworking.registerGlobalReceiver(MarketListingSyncPayload.TYPE, (payload, context) ->
 				ClientMarketListingCache.update(payload.json())
+		);
+
+		// Receive hourly price history for a specific item (response to opening the graph screen)
+		ClientPlayNetworking.registerGlobalReceiver(PriceHistoryResponsePayload.TYPE, (payload, context) ->
+				ClientPriceHistoryCache.update(payload.itemId(), payload.json())
 		);
 
 		// Receive auction list chunk from server

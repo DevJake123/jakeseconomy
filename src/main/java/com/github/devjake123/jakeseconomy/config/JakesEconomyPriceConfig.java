@@ -195,6 +195,7 @@ public class JakesEconomyPriceConfig {
         mobDrops.put("minecraft:prismarine_crystals",  new ItemPrice(50.0,     1_000));
         mobDrops.put("minecraft:phantom_membrane",     new ItemPrice(200.0,    3_000));
         mobDrops.put("minecraft:turtle_scute",         new ItemPrice(300.0,    2_000));
+        mobDrops.put("minecraft:egg",         new ItemPrice(50.0,    2_000));
         mobDrops.put("minecraft:ender_pearl",          new ItemPrice(150.0,    3_000));
         mobDrops.put("minecraft:ender_eye",            new ItemPrice(300.0,    3_000));
         mobDrops.put("minecraft:blaze_rod",            new ItemPrice(100.0,    4_000, 1));  // nether

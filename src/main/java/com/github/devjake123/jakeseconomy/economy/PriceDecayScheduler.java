@@ -20,6 +20,7 @@ import net.minecraft.server.MinecraftServer;
 public class PriceDecayScheduler {
 
     // Current tick count since last decay
+    private static boolean registered = false;
     private static long tickCount = 0;
 
     /**
@@ -27,6 +28,8 @@ public class PriceDecayScheduler {
      * Called once during mod initialization in JakesEconomy.onInitialize().
      */
     public static void register() {
+        if (registered) return;
+        registered = true;
         ServerTickEvents.END_SERVER_TICK.register(PriceDecayScheduler::onTick);
     }
 

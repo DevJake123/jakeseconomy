@@ -1,6 +1,8 @@
 package com.github.devjake123.jakeseconomy.economy;
 
 import com.github.devjake123.jakeseconomy.JakesEconomy;
+import com.github.devjake123.jakeseconomy.api.EconomyApiEvents;
+import com.github.devjake123.jakeseconomy.api.event.BalanceChangedEvent;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyServerConfig;
 import com.github.devjake123.jakeseconomy.network.BalanceSyncPayload;
 import com.github.devjake123.jakeseconomy.network.TransactionHistoryPayload;
@@ -28,6 +30,12 @@ public class EconomyState extends SavedData {
     private static final String SAVE_KEY = "jakeseconomy_economy";
     private static final int MAX_HISTORY = 100;
 
+    // Maximum hourly price snapshots retained per item (30 days × 24 h = 720)
+    private static final int MAX_PRICE_HISTORY = 720;
+
+    // Maximum 20-minute price snapshots retained per item (72 × 20 min = 24 h of fine-grained history)
+    private static final int MAX_RECENT_HISTORY = 72;
+
     // The wallet instance — holds all player balances
     private final PlayerWallet wallet = new PlayerWallet();
 
@@ -44,6 +52,14 @@ public class EconomyState extends SavedData {
     // Per-player transaction history (newest at front, max MAX_HISTORY entries)
     private final Map<UUID, Deque<TransactionEntry>> transactionHistory = new HashMap<>();
 
+    // Rolling hourly price history per item (oldest first, max MAX_PRICE_HISTORY entries)
+    // Used for Week / Month graph views.
+    private final Map<String, ArrayDeque<PricePoint>> priceHistory = new HashMap<>();
+
+    // Rolling 20-minute price history per item (oldest first, max MAX_RECENT_HISTORY entries = 24 h)
+    // Used for the Day graph view where fine-grained intraday resolution is wanted.
+    private final Map<String, ArrayDeque<PricePoint>> recentPriceHistory = new HashMap<>();
+
     public EconomyState() {}
 
     // ── Wallet ──────────────────────────────────────────────────────────────────
@@ -51,19 +67,33 @@ public class EconomyState extends SavedData {
     public long getBalance(UUID playerId) { return wallet.getBalance(playerId); }
 
     public void deposit(UUID playerId, long amount) {
+        if (amount <= 0) return; // guard: no-op deposit must not fire a spurious event
+        long old = wallet.getBalance(playerId);
         wallet.deposit(playerId, amount);
-        setDirty(); // Mark data as changed so it will be saved on next auto-save
+        setDirty();
+        EconomyApiEvents.BALANCE_CHANGED.invoker().onBalanceChanged(
+                new BalanceChangedEvent(playerId, old, wallet.getBalance(playerId)));
     }
 
     public boolean withdraw(UUID playerId, long amount) {
+        long old = wallet.getBalance(playerId);
         boolean success = wallet.withdraw(playerId, amount);
-        if (success) setDirty();
+        if (success) {
+            setDirty();
+            EconomyApiEvents.BALANCE_CHANGED.invoker().onBalanceChanged(
+                    new BalanceChangedEvent(playerId, old, wallet.getBalance(playerId)));
+        }
         return success;
     }
 
     public void setBalance(UUID playerId, long amount) {
-        wallet.setBalance(playerId, amount);
+        long clamped = Math.max(0L, amount);
+        long old = wallet.getBalance(playerId);
+        if (old == clamped) return; // guard: no change means no event or dirty mark needed
+        wallet.setBalance(playerId, clamped);
         setDirty();
+        EconomyApiEvents.BALANCE_CHANGED.invoker().onBalanceChanged(
+                new BalanceChangedEvent(playerId, old, clamped));
     }
 
     // ── Transaction History ──────────────────────────────────────────────────────
@@ -80,6 +110,79 @@ public class EconomyState extends SavedData {
     public List<TransactionEntry> getHistory(UUID playerId) {
         Deque<TransactionEntry> history = transactionHistory.get(playerId);
         return history == null ? List.of() : new ArrayList<>(history);
+    }
+
+    // ── Price History ─────────────────────────────────────────────────────────
+
+    /**
+     * Appends a price snapshot for one item.
+     * Called every hour by {@link PriceHistoryScheduler}.
+     * Evicts the oldest entry when the rolling window exceeds {@link #MAX_PRICE_HISTORY}.
+     */
+    public void recordPriceSnapshot(String itemId, double price) {
+        ArrayDeque<PricePoint> history = priceHistory.computeIfAbsent(itemId, k -> new ArrayDeque<>());
+        history.addLast(new PricePoint(System.currentTimeMillis(), price));
+        while (history.size() > MAX_PRICE_HISTORY) history.removeFirst();
+        setDirty();
+    }
+
+    /**
+     * Appends a fine-grained (20-minute) price snapshot for one item.
+     * Called every 20 minutes by {@link PriceHistoryScheduler}.
+     * Retains at most {@link #MAX_RECENT_HISTORY} points (= 24 hours).
+     * Used exclusively by the Day view in the trend graph.
+     */
+    public void recordRecentPriceSnapshot(String itemId, double price) {
+        ArrayDeque<PricePoint> history = recentPriceHistory.computeIfAbsent(itemId, k -> new ArrayDeque<>());
+        history.addLast(new PricePoint(System.currentTimeMillis(), price));
+        while (history.size() > MAX_RECENT_HISTORY) history.removeFirst();
+        setDirty();
+    }
+
+    /**
+     * Returns all stored hourly archive snapshots for an item, ordered oldest → newest.
+     * Used for Week / Month graph views.
+     */
+    public List<PricePoint> getPriceHistory(String itemId) {
+        ArrayDeque<PricePoint> history = priceHistory.get(itemId);
+        return history == null ? List.of() : new ArrayList<>(history);
+    }
+
+    /**
+     * Returns all stored 20-minute recent snapshots for an item, ordered oldest → newest.
+     * Used for the Day graph view.
+     */
+    public List<PricePoint> getRecentPriceHistory(String itemId) {
+        ArrayDeque<PricePoint> history = recentPriceHistory.get(itemId);
+        return history == null ? List.of() : new ArrayList<>(history);
+    }
+
+    /**
+     * Replaces the stored hourly archive history for a single item entirely.
+     * Used only by the {@code /jecon debug fillhistory} command.
+     */
+    public void injectPriceHistory(String itemId, List<PricePoint> points) {
+        ArrayDeque<PricePoint> deque = priceHistory.computeIfAbsent(itemId, k -> new ArrayDeque<>());
+        deque.clear();
+        for (PricePoint p : points) {
+            deque.addLast(p);
+            while (deque.size() > MAX_PRICE_HISTORY) deque.removeFirst();
+        }
+        setDirty();
+    }
+
+    /**
+     * Replaces the stored 20-minute recent history for a single item entirely.
+     * Used only by the {@code /jecon debug fillhistory} command.
+     */
+    public void injectRecentPriceHistory(String itemId, List<PricePoint> points) {
+        ArrayDeque<PricePoint> deque = recentPriceHistory.computeIfAbsent(itemId, k -> new ArrayDeque<>());
+        deque.clear();
+        for (PricePoint p : points) {
+            deque.addLast(p);
+            while (deque.size() > MAX_RECENT_HISTORY) deque.removeFirst();
+        }
+        setDirty();
     }
 
     // ── Serialization ────────────────────────────────────────────────────────────
@@ -136,6 +239,38 @@ public class EconomyState extends SavedData {
             historyTag.put(playerEntry.getKey().toString(), listTag);
         }
         tag.put("txHistory", historyTag);
+
+        // Save rolling hourly archive history (per-item, for Week/Month views)
+        CompoundTag phTag = new CompoundTag();
+        for (Map.Entry<String, ArrayDeque<PricePoint>> itemEntry : priceHistory.entrySet()) {
+            ListTag ptsTag = new ListTag();
+            for (PricePoint pt : itemEntry.getValue()) {
+                CompoundTag ptTag = new CompoundTag();
+                ptTag.putLong("t", pt.timestamp());
+                ptTag.putDouble("p", pt.price());
+                ptsTag.add(ptTag);
+            }
+            CompoundTag itemTag = new CompoundTag();
+            itemTag.put("pts", ptsTag);
+            phTag.put(itemEntry.getKey(), itemTag);
+        }
+        tag.put("priceHistory", phTag);
+
+        // Save rolling 20-minute recent history (per-item, for Day view)
+        CompoundTag rhTag = new CompoundTag();
+        for (Map.Entry<String, ArrayDeque<PricePoint>> itemEntry : recentPriceHistory.entrySet()) {
+            ListTag ptsTag = new ListTag();
+            for (PricePoint pt : itemEntry.getValue()) {
+                CompoundTag ptTag = new CompoundTag();
+                ptTag.putLong("t", pt.timestamp());
+                ptTag.putDouble("p", pt.price());
+                ptsTag.add(ptTag);
+            }
+            CompoundTag itemTag = new CompoundTag();
+            itemTag.put("pts", ptsTag);
+            rhTag.put(itemEntry.getKey(), itemTag);
+        }
+        tag.put("recentPriceHistory", rhTag);
 
         return tag;
     }
@@ -203,6 +338,39 @@ public class EconomyState extends SavedData {
             } catch (IllegalArgumentException ignored) {}
         }
 
+        // Load rolling hourly archive history
+        CompoundTag phTag = tag.getCompound("priceHistory");
+        for (String itemKey : phTag.getAllKeys()) {
+            try {
+                CompoundTag itemTag = phTag.getCompound(itemKey);
+                ListTag ptsTag = itemTag.getList("pts", Tag.TAG_COMPOUND);
+                ArrayDeque<PricePoint> history = new ArrayDeque<>();
+                for (int i = 0; i < ptsTag.size(); i++) {
+                    CompoundTag ptTag = ptsTag.getCompound(i);
+                    history.addLast(new PricePoint(ptTag.getLong("t"), ptTag.getDouble("p")));
+                }
+                state.priceHistory.put(itemKey, history);
+            } catch (Exception e) {
+                JakesEconomy.LOGGER.warn("Skipping corrupt price history for item {}: {}", itemKey, e.getMessage());
+            }
+        }
+
+        // Load rolling 20-minute recent history (may be absent in older save files — gracefully skipped)
+        CompoundTag rhTag = tag.getCompound("recentPriceHistory");
+        for (String itemKey : rhTag.getAllKeys()) {
+            try {
+                CompoundTag itemTag = rhTag.getCompound(itemKey);
+                ListTag ptsTag = itemTag.getList("pts", Tag.TAG_COMPOUND);
+                ArrayDeque<PricePoint> history = new ArrayDeque<>();
+                for (int i = 0; i < ptsTag.size(); i++) {
+                    CompoundTag ptTag = ptsTag.getCompound(i);
+                    history.addLast(new PricePoint(ptTag.getLong("t"), ptTag.getDouble("p")));
+                }
+                state.recentPriceHistory.put(itemKey, history);
+            } catch (Exception e) {
+                JakesEconomy.LOGGER.warn("Skipping corrupt recent price history for item {}: {}", itemKey, e.getMessage());
+            }
+        }
 
         return state;
     }
@@ -223,8 +391,12 @@ public class EconomyState extends SavedData {
 
     // ── Rate Limiting ────────────────────────────────────────────────────────────
 
-    public long getRemainingBuyAllowance(UUID playerId, String itemId, long netDeficit, JakesEconomyServerConfig config) {
-        if (netDeficit < 0) return Long.MAX_VALUE;
+    /**
+     * Ensures the player's per-window contribution window is current, resetting it if expired.
+     * Shared by both buy and sell allowance calculations so the window only resets once per
+     * logical check even if both methods are called in the same tick.
+     */
+    private Map<String, Long> getOrResetContributions(UUID playerId, JakesEconomyServerConfig config) {
         long windowMillis = (long)(config.deficitWindowHours * 3_600_000L);
         long now = System.currentTimeMillis();
         long windowStart = windowStartTimes.getOrDefault(playerId, 0L);
@@ -232,9 +404,36 @@ public class EconomyState extends SavedData {
             windowStartTimes.put(playerId, now);
             deficitContributions.computeIfAbsent(playerId, k -> new HashMap<>()).clear();
         }
-        Map<String, Long> contributions = deficitContributions.computeIfAbsent(playerId, k -> new HashMap<>());
+        return deficitContributions.computeIfAbsent(playerId, k -> new HashMap<>());
+    }
+
+    /**
+     * Returns how many units the player is still allowed to BUY of the given item this window.
+     * Only applied when the market is in deficit (netDeficit &gt;= 0 — price at or above base).
+     * Returns Long.MAX_VALUE when the market is in surplus so buy-backs are unrestricted.
+     */
+    public long getRemainingBuyAllowance(UUID playerId, String itemId, long netDeficit, JakesEconomyServerConfig config) {
+        if (netDeficit < 0) return Long.MAX_VALUE;
+        Map<String, Long> contributions = getOrResetContributions(playerId, config);
         long current = contributions.getOrDefault(itemId, 0L);
         return Math.max(0, config.deficitLimitPerWindow - current);
+    }
+
+    /**
+     * Returns how many units the player is still allowed to SELL of the given item this window.
+     * Only applied when the market is already in surplus (netDeficit &lt;= 0 — price at or below base).
+     * Returns Long.MAX_VALUE when the market is in deficit so sell-offs are unrestricted.
+     * This is the symmetric counterpart to getRemainingBuyAllowance and prevents players from
+     * continuously dumping items to crash prices without any cooldown.
+     */
+    public long getRemainingSellAllowance(UUID playerId, String itemId, long netDeficit, JakesEconomyServerConfig config) {
+        if (netDeficit > 0) return Long.MAX_VALUE; // market is in deficit — sells are unrestricted
+        Map<String, Long> contributions = getOrResetContributions(playerId, config);
+        // contributions[item] is positive for net-buyers, negative for net-sellers.
+        // netSold = how much the player has net-contributed to the surplus this window.
+        long current  = contributions.getOrDefault(itemId, 0L);
+        long netSold  = -current; // positive = net sell pressure from this player
+        return Math.max(0, config.deficitLimitPerWindow - netSold);
     }
 
     /** Records a buy contribution (positive). */
