@@ -3,6 +3,7 @@ package com.github.devjake123.jakeseconomy.network;
 import com.github.devjake123.jakeseconomy.JakesEconomy;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyConfigManager;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyPriceConfig;
+import com.github.devjake123.jakeseconomy.config.JakesEconomyServerConfig;
 import com.github.devjake123.jakeseconomy.economy.AuctionEntry;
 import com.github.devjake123.jakeseconomy.economy.auction.AuctionManager;
 import com.github.devjake123.jakeseconomy.economy.auction.AuctionState;
@@ -11,6 +12,8 @@ import com.github.devjake123.jakeseconomy.economy.MarketListing;
 import com.github.devjake123.jakeseconomy.economy.MarketManager;
 import com.github.devjake123.jakeseconomy.economy.PricePoint;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyItems;
+import com.github.devjake123.jakeseconomy.network.AuctionConfigSyncPayload;
+import com.github.devjake123.jakeseconomy.network.OpenScreenPayload;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -80,11 +83,14 @@ public class MarketPacketHandler {
         PayloadTypeRegistry.playS2C().register(TransactionHistoryPayload.TYPE,    TransactionHistoryPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AdvancementLockSyncPayload.TYPE,   AdvancementLockSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(PriceConfigSyncPayload.TYPE,       PriceConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(GuiVisibilitySyncPayload.TYPE,     GuiVisibilitySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(MarketListingSyncPayload.TYPE,     MarketListingSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AuctionListSyncPayload.TYPE,       AuctionListSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AuctionDeltaSyncPayload.TYPE,      AuctionDeltaSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(AuctionClaimReadyPayload.TYPE,     AuctionClaimReadyPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(PriceHistoryResponsePayload.TYPE,  PriceHistoryResponsePayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(AuctionConfigSyncPayload.TYPE,     AuctionConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(OpenScreenPayload.TYPE,            OpenScreenPayload.CODEC);
 
         // Handle incoming buy packet on the server
         ServerPlayNetworking.registerGlobalReceiver(MarketBuyPayload.TYPE, (payload, context) -> {
@@ -275,6 +281,21 @@ public class MarketPacketHandler {
                     syncLocks(handler.player, server);
                     ServerPlayNetworking.send(handler.player,
                             new PriceConfigSyncPayload(JakesEconomyConfigManager.serializePrices()));
+
+                    // Sync GUI visibility settings from server config
+                    JakesEconomyServerConfig serverCfg = JakesEconomyConfigManager.getServer();
+                    ServerPlayNetworking.send(handler.player,
+                            new GuiVisibilitySyncPayload(
+                                    serverCfg.showMarketTab,
+                                    serverCfg.showWithdrawTab,
+                                    serverCfg.showHistoryTab,
+                                    serverCfg.showAuctionTab,
+                                    serverCfg.allowHotkeyOpen));
+
+                    // Sync auction item-filter config so the client item-picker filters correctly
+                    ServerPlayNetworking.send(handler.player,
+                            new AuctionConfigSyncPayload(buildAuctionConfigJson(serverCfg)));
+
                     ServerPlayNetworking.send(handler.player,
                             new MarketListingSyncPayload(buildFullListingJson()));
                     String auctionJson = AuctionManager.get().buildListJson(server, 0, AUCTION_PAGE_SIZE);
@@ -470,6 +491,28 @@ public class MarketPacketHandler {
         } catch (Exception e) {
             JakesEconomy.LOGGER.warn("[Auction] Failed to broadcast auction list: {}", e.getMessage(), e);
         }
+    }
+
+    /** Builds the JSON string for AuctionConfigSyncPayload from the server config. */
+    private static String buildAuctionConfigJson(JakesEconomyServerConfig cfg) {
+        StringBuilder sb = new StringBuilder("{");
+        sb.append("\"mode\":\"").append(cfg.auctionItemMode).append("\",");
+        sb.append("\"allowMarketItems\":").append(cfg.allowMarketItemsInAuction).append(",");
+        // whitelist array
+        sb.append("\"whitelist\":[");
+        for (int i = 0; i < cfg.auctionWhitelist.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(cfg.auctionWhitelist.get(i)).append('"');
+        }
+        sb.append("],");
+        // blacklist array
+        sb.append("\"blacklist\":[");
+        for (int i = 0; i < cfg.auctionBlacklist.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(cfg.auctionBlacklist.get(i)).append('"');
+        }
+        sb.append("]}");
+        return sb.toString();
     }
 
     /** Sends the claim-ready flag to the given player. */

@@ -78,6 +78,68 @@ public class JakesEconomyServerConfig {
     // Default: 1 000 000 000 000 (1 trillion).
     public long maxListingPrice = 1_000_000_000_000L;
 
+    // --- Auction Item Control ---
+
+    // "all"       - Any item not in the market can be auctioned (default)
+    // "whitelist" - Only items in auctionWhitelist can be auctioned
+    // "blacklist" - Any item EXCEPT those in auctionBlacklist can be auctioned
+    public String auctionItemMode = "all";
+
+    // If true, items that are also in the main market can be auctioned
+    // (as long as they also pass the whitelist/blacklist rules).
+    public boolean allowMarketItemsInAuction = false;
+
+    public java.util.List<String> auctionWhitelist = new java.util.ArrayList<>();
+    public java.util.List<String> auctionBlacklist = new java.util.ArrayList<>();
+
+    // --- GUI Tab Visibility ---
+
+    // Control which tabs are visible in the market GUI.
+    // Useful for map-makers who want to limit functionality or simplify the UI.
+    public boolean showMarketTab = true;
+    public boolean showWithdrawTab = true;
+    public boolean showHistoryTab = true;
+    public boolean showAuctionTab = true;
+
+    // If false, the client-side keybind (default: ;) will not open the GUI.
+    // Players can still open it via /jecon market open or an NPC trigger.
+    // Useful for adventure maps that want full control over when the market appears.
+    public boolean allowHotkeyOpen = true;
+
+    // --- Command Permission Levels ---
+
+    /**
+     * Per-command permission level overrides. Defaults mirror the old hard-coded
+     * behaviour: admin commands require level 2 (op), player commands require 0.
+     *
+     * Minecraft permission levels:
+     *   0 = all players
+     *   1 = moderator ops
+     *   2 = operator (standard op)
+     *   3 = admin ops
+     *   4 = server console / owner
+     */
+    public static class Permissions {
+        /** /jecon balance <player> — check another player's balance */
+        public int balanceOther = 2;
+        /** /jecon give */
+        public int give = 2;
+        /** /jecon set */
+        public int set = 2;
+        /** /jecon take */
+        public int take = 2;
+        /** /jecon market open — open the market GUI (set to 0 to allow all players) */
+        public int marketOpen = 0;
+        /** /jecon market setprice, addcategory, removeprice, setlock, price */
+        public int marketAdmin = 2;
+        /** /jecon auction open — open the auction GUI (set to 0 to allow all players) */
+        public int auctionOpen = 0;
+        /** /jecon debug */
+        public int debug = 2;
+    }
+
+    public Permissions permissions = new Permissions();
+
     /**
      * Called after Gson deserialization to fill in any fields that Gson left at
      * their Java primitive default (0 / false) because the config file pre-dates them.
@@ -97,5 +159,10 @@ public class JakesEconomyServerConfig {
         // listingFeePercent == 0 is a valid setting (no fee), so only backfill if negative
         if (listingFeePercent        < 0)  listingFeePercent        = d.listingFeePercent;
         if (maxListingPrice         <= 0)  maxListingPrice          = d.maxListingPrice;
+
+        if (auctionItemMode == null || auctionItemMode.isEmpty()) auctionItemMode = d.auctionItemMode;
+        if (auctionWhitelist == null) auctionWhitelist = d.auctionWhitelist;
+        if (auctionBlacklist == null) auctionBlacklist = d.auctionBlacklist;
+        if (permissions == null) permissions = new Permissions();
     }
 }

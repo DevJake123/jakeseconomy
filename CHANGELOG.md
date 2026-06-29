@@ -2,9 +2,92 @@
 
 All notable changes to Jake's Economy will be documented here.
 
-## [1.2.0+1.21.1] — 2026-06-08
+## [1.3.0+1.21.1] — 2026-06-29
 
-### Price trend graph improvements
+### New config fields in `jakeseconomy-server.json`
+
+> **Note for existing servers / map-makers:** These fields are fully backwards-compatible.  
+> If your existing config file is missing any of them, the mod will automatically apply the  
+> defaults shown below on next load. No manual editing is required unless you want to change behaviour.
+
+#### GUI Tab Visibility
+Control which tabs appear in the market GUI — useful for adventure maps that only want to expose certain features.
+
+| Field | Default | Description |
+|---|---|---|
+| `showMarketTab` | `true` | Show or hide the Market tab |
+| `showWithdrawTab` | `true` | Show or hide the Withdraw tab (set `false` to keep all money digital) |
+| `showHistoryTab` | `true` | Show or hide the Transaction History tab |
+| `showAuctionTab` | `true` | Show or hide the Auction House button |
+| `allowHotkeyOpen` | `true` | If `false`, the `;` keybind does nothing — GUI can only be opened via `/jecon market open` or an NPC command |
+
+#### Auction Item Control
+Fine-grained control over what players can list in the Auction House.
+
+| Field | Default | Description |
+|---|---|---|
+| `auctionItemMode` | `"all"` | `"all"` — anything not in market; `"whitelist"` — only listed items; `"blacklist"` — anything except listed items |
+| `auctionWhitelist` | `[]` | Item IDs allowed when mode is `"whitelist"` (e.g. `["minecraft:bread"]`). Whitelisted items bypass the market-item restriction. |
+| `auctionBlacklist` | `[]` | Item IDs blocked when mode is `"blacklist"` |
+| `allowMarketItemsInAuction` | `false` | If `true`, items also in the main market can be auctioned |
+
+#### Command Permission Levels
+Each command group now has an independently configurable permission level. Set inside the `"permissions"` object.
+
+| Field | Default | Controls |
+|---|---|---|
+| `permissions.balanceOther` | `2` | `/jecon balance <player>` |
+| `permissions.give` | `2` | `/jecon give` |
+| `permissions.set` | `2` | `/jecon set` |
+| `permissions.take` | `2` | `/jecon take` |
+| `permissions.marketOpen` | `0` | `/jecon market open` (0 = all players) |
+| `permissions.marketAdmin` | `2` | `setprice`, `addcategory`, `removeprice`, `setlock`, `price` |
+| `permissions.auctionOpen` | `0` | `/jecon auction open` (0 = all players) |
+| `permissions.debug` | `2` | `/jecon debug` |
+
+*Minecraft permission levels: 0 = all players · 1 = moderator · 2 = operator · 3 = admin · 4 = owner*
+
+#### Config file comments
+`jakeseconomy-server.json` now generates with inline `//` comments describing every field. Existing hand-edited configs still load correctly — the reader strips comments before parsing.
+
+---
+
+### New features
+
+#### Map-maker / server control
+- **GUI tab visibility** — hide any tab via the config; changes sync to clients on join
+- **Hotkey lockdown** — `allowHotkeyOpen: false` prevents players from opening the market with the keybind; they must interact with an NPC or use a command trigger instead
+- **Per-command permission levels** — each admin command group has its own configurable op level; set `marketOpen`/`auctionOpen` to `2` during testing to restrict access
+
+#### Auction House item filtering
+- **Whitelist mode** — only the exact items you list in `auctionWhitelist` can be auctioned; the Create Listing item picker shows only those items (and correctly overrides the "market items can't be auctioned" restriction for whitelisted entries)
+- **Blacklist mode** — block specific items from the auction house
+- **`allowMarketItemsInAuction`** — opt in to allowing market items to also appear in auctions
+
+#### New commands
+- `/jecon market open` — opens the Market GUI for the executing player (permission: `marketOpen`)
+- `/jecon auction open` — opens the Auction House GUI for the executing player (permission: `auctionOpen`)
+
+---
+
+### Bug fixes
+
+#### Auction House
+- Fixed Create Listing item picker click targets being offset from what was displayed — draw list and click list now always use the same filtered slot array
+- Fixed items outside the auction whitelist appearing in the Create Listing picker when whitelist mode was active
+- Fixed `OpenScreenPayload` not being registered in `PayloadTypeRegistry.playS2C()`, causing a crash on client startup (`Cannot register handler as no payload type has been registered`)
+- Fixed auction browse list not filtering out non-whitelisted entries when `auctionItemMode` is `"whitelist"`
+
+---
+
+## [1.2.1+1.21.1] — 2026-06-22
+
+### Integrations
+- Added native integration with CobbleDollars mod — both mods sync their currency values automatically
+
+---
+
+## [1.2.0+1.21.1] — 2026-06-08
 
 #### Market GUI — Price History Graph
 - **Tiered snapshot system**: Fine-grained 20-minute snapshots for intraday detail (Day view), hourly snapshots for long-term trends (Week / Month views)

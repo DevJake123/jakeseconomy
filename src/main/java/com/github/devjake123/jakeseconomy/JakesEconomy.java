@@ -15,8 +15,13 @@ import com.github.devjake123.jakeseconomy.init.JakesEconomyItemGroup;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyItems;
 import com.github.devjake123.jakeseconomy.init.JakesEconomyLootTables;
 import com.github.devjake123.jakeseconomy.network.MarketPacketHandler;
+import com.github.devjake123.jakeseconomy.integration.CobbledollarsIntegration;
+import com.github.devjake123.jakeseconomy.network.OpenScreenPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,6 +93,32 @@ public class JakesEconomy implements ModInitializer {
 
 		// Register network packet handlers for client→server market transactions
 		MarketPacketHandler.register();
+
+        FabricLoader.getInstance().getModContainer(MOD_ID).ifPresent(modContainer -> {
+            if (modContainer.getMetadata().getVersion().getFriendlyString().contains("fabric")) {
+                ServerPlayNetworking.registerGlobalReceiver(OpenScreenPayload.TYPE, (payload, context) -> {
+        // We don't need to do anything here, the client will handle opening the screen.
+                });
+            }
+        });
+
+		// Cobbledollars integration (optional - only if mod is loaded)
+		if (FabricLoader.getInstance().isModLoaded("cobbledollars")) {
+			try {
+				CobbledollarsIntegration.initialize();
+
+				// Hook player join/leave events for balance initialization
+				ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+					CobbledollarsIntegration.onPlayerJoin(handler.getPlayer(), server);
+				});
+
+				ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+					CobbledollarsIntegration.onPlayerLeave(handler.getPlayer());
+				});
+			} catch (Exception e) {
+				LOGGER.error("Failed to initialize Cobbledollars integration", e);
+			}
+		}
 
 		LOGGER.info("Jakes Economy Initialized.");
 	}

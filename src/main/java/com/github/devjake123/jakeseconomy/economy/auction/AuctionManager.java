@@ -131,11 +131,34 @@ public class AuctionManager {
         String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         AuctionState state = AuctionState.get(server);
 
-        // Block items that are already in the market from being listed
-        if (MarketManager.get().isMarketItem(itemId)) {
-            player.sendSystemMessage(Component.literal(
-                    "Items available in the market cannot be listed in the Auction House."));
-            return;
+        // Auction item control (whitelist/blacklist)
+        boolean isMarketItem = MarketManager.get().isMarketItem(itemId);
+        boolean isWhitelisted = config.auctionWhitelist.contains(itemId);
+        boolean isBlacklisted = config.auctionBlacklist.contains(itemId);
+
+        if (isWhitelisted) {
+            // Whitelisted items are always allowed
+        } else {
+            if (!config.allowMarketItemsInAuction && isMarketItem) {
+                player.sendSystemMessage(Component.literal(
+                        "This item is in the main market and cannot be auctioned."));
+                return;
+            }
+
+            switch (config.auctionItemMode) {
+                case "whitelist":
+                    player.sendSystemMessage(Component.literal(
+                            "This item is not on the auction whitelist and cannot be listed."));
+                    return;
+                case "blacklist":
+                    if (isBlacklisted) {
+                        player.sendSystemMessage(Component.literal(
+                                "This item is on the auction blacklist and cannot be listed."));
+                        return;
+                    }
+                    break;
+                // "all" mode has no extra restrictions
+            }
         }
 
         // Hard cap: 20 active listings per player
@@ -578,8 +601,10 @@ public class AuctionManager {
      */
     public String buildListJson(MinecraftServer server, int offset, int count) {
         AuctionState state = AuctionState.get(server);
+        JakesEconomyServerConfig cfg = JakesEconomyConfigManager.getServer();
         List<AuctionEntry> active = state.auctions.values().stream()
                 .filter(a -> a.active)
+                .filter(a -> isListingVisible(a.itemId, cfg))
                 .sorted(Comparator.comparingLong(a -> a.endTimeEpochMs))
                 .toList();
         int total = active.size();
@@ -593,6 +618,19 @@ public class AuctionManager {
         }
         sb.append("]}");
         return sb.toString();
+    }
+
+    /**
+     * Returns true if a listing with the given itemId should be visible to buyers
+     * under the current server config (whitelist/blacklist/all mode).
+     * Always returns true for "all" mode.
+     */
+    private static boolean isListingVisible(String itemId, JakesEconomyServerConfig cfg) {
+        return switch (cfg.auctionItemMode) {
+            case "whitelist" -> cfg.auctionWhitelist.contains(itemId);
+            case "blacklist" -> !cfg.auctionBlacklist.contains(itemId);
+            default          -> true; // "all"
+        };
     }
 
     /** Builds a single-entry delta JSON for broadcast after a mutation. */
@@ -688,5 +726,4 @@ public class AuctionManager {
         return AuctionState.get(server).auctions.get(auctionId);
     }
 }
-
 

@@ -3,6 +3,7 @@ package com.github.devjake123.jakeseconomy.client.screen;
 import com.github.devjake123.jakeseconomy.client.ClientAdvancementLockCache;
 import com.github.devjake123.jakeseconomy.client.ClientAuctionCache;
 import com.github.devjake123.jakeseconomy.client.ClientBalanceCache;
+import com.github.devjake123.jakeseconomy.client.ClientGuiVisibilityCache;
 import com.github.devjake123.jakeseconomy.client.ClientMarketListingCache;
 import com.github.devjake123.jakeseconomy.client.ClientTransactionHistoryCache;
 import com.github.devjake123.jakeseconomy.client.network.MarketPacketSender;
@@ -111,6 +112,13 @@ public class MarketScreen extends Screen {
         }
         sortAscending = true; // always start A→Z on each fresh screen open
         refreshItemList();
+
+        // Ensure navMode is set to a visible tab, defaulting to the first available
+        if (!isNavModeVisible(navMode)) {
+            if (ClientGuiVisibilityCache.showMarket()) navMode = NavMode.MARKET;
+            else if (ClientGuiVisibilityCache.showWithdraw()) navMode = NavMode.WITHDRAW;
+            else if (ClientGuiVisibilityCache.showHistory()) navMode = NavMode.HISTORY;
+        }
     }
 
     private void refreshItemList() {
@@ -185,6 +193,15 @@ public class MarketScreen extends Screen {
         for (SortPair p : locked)   { visibleItems.add(p.item()); visibleItemCategories.add(p.cat()); }
     }
 
+    /** Returns true if the given nav mode should be shown based on server config. */
+    private boolean isNavModeVisible(NavMode mode) {
+        return switch (mode) {
+            case MARKET   -> ClientGuiVisibilityCache.showMarket();
+            case WITHDRAW -> ClientGuiVisibilityCache.showWithdraw();
+            case HISTORY  -> ClientGuiVisibilityCache.showHistory();
+        };
+    }
+
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {}
 
@@ -204,38 +221,51 @@ public class MarketScreen extends Screen {
         graphics.fill(sideX + SIDEBAR_W, guiTop + 1, sideX + SIDEBAR_W + 1, sideBottom, 0xFF444444);
 
         // Nav buttons — Market, Withdraw, History (Auction is a separate button at the bottom)
-        String[] navLabels = { "Market", "Withdraw", "History" };
-        NavMode[] navModes = { NavMode.MARKET, NavMode.WITHDRAW, NavMode.HISTORY };
+        String[] allNavLabels = { "Market", "Withdraw", "History" };
+        NavMode[] allNavModes = { NavMode.MARKET, NavMode.WITHDRAW, NavMode.HISTORY };
+
+        // Build list of visible nav buttons
+        java.util.List<String> navLabels = new ArrayList<>();
+        java.util.List<NavMode> navModes = new ArrayList<>();
+        for (int i = 0; i < allNavModes.length; i++) {
+            if (isNavModeVisible(allNavModes[i])) {
+                navLabels.add(allNavLabels[i]);
+                navModes.add(allNavModes[i]);
+            }
+        }
+
         int navBtnH = 22;
         int navBtnY = guiTop + 8;
-        for (int n = 0; n < navLabels.length; n++) {
-            boolean active  = navMode == navModes[n];
+        for (int n = 0; n < navLabels.size(); n++) {
+            boolean active  = navMode == navModes.get(n);
             boolean hovered = mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
                     && mouseY >= navBtnY && mouseY < navBtnY + navBtnH;
             graphics.fill(sideX + 3, navBtnY, sideX + SIDEBAR_W - 3, navBtnY + navBtnH,
                     active ? 0xFF333333 : (hovered ? 0xFF252525 : 0xFF1A1A1A));
             if (active) graphics.fill(sideX + 3, navBtnY, sideX + 5, navBtnY + navBtnH, 0xFFFFAA00);
-            int lx = sideX + 3 + (SIDEBAR_W - 6 - font.width(navLabels[n])) / 2;
-            graphics.drawString(font, navLabels[n], lx, navBtnY + 7, active ? 0xFFFFFFFF : 0xFF999999);
+            int lx = sideX + 3 + (SIDEBAR_W - 6 - font.width(navLabels.get(n))) / 2;
+            graphics.drawString(font, navLabels.get(n), lx, navBtnY + 7, active ? 0xFFFFFFFF : 0xFF999999);
             navBtnY += navBtnH + 3;
         }
 
-        // Small "Auction →" button pinned to the bottom of the sidebar
-        int aucBtnY = guiTop + panelHeight - 28;
-        boolean aucBadge   = ClientAuctionCache.hasClaims();
-        boolean aucHovered = mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
-                && mouseY >= aucBtnY && mouseY < aucBtnY + 20;
-        // Divider line above auction button
-        graphics.fill(sideX + 4, aucBtnY - 4, sideX + SIDEBAR_W - 4, aucBtnY - 3, 0xFF333333);
-        graphics.fill(sideX + 3, aucBtnY, sideX + SIDEBAR_W - 3, aucBtnY + 20,
-                aucBadge ? 0xFF332200 : (aucHovered ? 0xFF252525 : 0xFF1A1A1A));
-        if (aucBadge) {
-            graphics.fill(sideX + 3, aucBtnY, sideX + SIDEBAR_W - 3, aucBtnY + 1, 0xFFFFAA00);
+        // Small "Auction →" button pinned to the bottom of the sidebar (only if enabled)
+        if (ClientGuiVisibilityCache.showAuction()) {
+            int aucBtnY = guiTop + panelHeight - 28;
+            boolean aucBadge   = ClientAuctionCache.hasClaims();
+            boolean aucHovered = mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
+                    && mouseY >= aucBtnY && mouseY < aucBtnY + 20;
+            // Divider line above auction button
+            graphics.fill(sideX + 4, aucBtnY - 4, sideX + SIDEBAR_W - 4, aucBtnY - 3, 0xFF333333);
+            graphics.fill(sideX + 3, aucBtnY, sideX + SIDEBAR_W - 3, aucBtnY + 20,
+                    aucBadge ? 0xFF332200 : (aucHovered ? 0xFF252525 : 0xFF1A1A1A));
+            if (aucBadge) {
+                graphics.fill(sideX + 3, aucBtnY, sideX + SIDEBAR_W - 3, aucBtnY + 1, 0xFFFFAA00);
+            }
+            String aucLabel = "Auction \u2192";
+            int aucLx = sideX + 3 + (SIDEBAR_W - 6 - font.width(aucLabel)) / 2;
+            graphics.drawString(font, aucLabel, aucLx, aucBtnY + 6,
+                    aucBadge ? 0xFFFFDD55 : (aucHovered ? 0xFFCCCCCC : 0xFF888888));
         }
-        String aucLabel = "Auction \u2192";
-        int aucLx = sideX + 3 + (SIDEBAR_W - 6 - font.width(aucLabel)) / 2;
-        graphics.drawString(font, aucLabel, aucLx, aucBtnY + 6,
-                aucBadge ? 0xFFFFDD55 : (aucHovered ? 0xFFCCCCCC : 0xFF888888));
 
         // Content area
         int contentX = guiLeft + SIDEBAR_W + 2;
@@ -678,27 +708,39 @@ public class MarketScreen extends Screen {
             return true;
         }
 
-        // Sidebar nav — Market, Withdraw, History
+        // Sidebar nav — Market, Withdraw, History (dynamically filtered by visibility)
         int sideX = guiLeft + 1;
-        NavMode[] navModes = { NavMode.MARKET, NavMode.WITHDRAW, NavMode.HISTORY };
+        String[] allNavLabels = { "Market", "Withdraw", "History" };
+        NavMode[] allNavModes = { NavMode.MARKET, NavMode.WITHDRAW, NavMode.HISTORY };
+
+        // Build list of visible nav buttons
+        java.util.List<NavMode> navModes = new ArrayList<>();
+        for (NavMode mode : allNavModes) {
+            if (isNavModeVisible(mode)) {
+                navModes.add(mode);
+            }
+        }
+
         int navBtnH = 22;
         int navBtnY = guiTop + 8;
-        for (int n = 0; n < 3; n++) {
+        for (int n = 0; n < navModes.size(); n++) {
             if (mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
                     && mouseY >= navBtnY && mouseY < navBtnY + navBtnH) {
-                navMode = navModes[n];
+                navMode = navModes.get(n);
                 commitEdit();
                 return true;
             }
             navBtnY += navBtnH + 3;
         }
 
-        // Small Auction → button at the bottom of the sidebar
-        int aucBtnY = guiTop + panelHeight - 28;
-        if (mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
-                && mouseY >= aucBtnY && mouseY < aucBtnY + 20) {
-            minecraft.setScreen(new AuctionScreen(this));
-            return true;
+        // Small Auction → button at the bottom of the sidebar (only if enabled)
+        if (ClientGuiVisibilityCache.showAuction()) {
+            int aucBtnY = guiTop + panelHeight - 28;
+            if (mouseX >= sideX + 3 && mouseX <= sideX + SIDEBAR_W - 3
+                    && mouseY >= aucBtnY && mouseY < aucBtnY + 20) {
+                minecraft.setScreen(new AuctionScreen(this));
+                return true;
+            }
         }
 
         int contentX = guiLeft + SIDEBAR_W + 2;

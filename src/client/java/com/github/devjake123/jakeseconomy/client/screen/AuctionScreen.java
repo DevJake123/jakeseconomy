@@ -1,6 +1,7 @@
 package com.github.devjake123.jakeseconomy.client.screen;
 
 import com.github.devjake123.jakeseconomy.client.ClientAuctionCache;
+import com.github.devjake123.jakeseconomy.client.ClientAuctionConfigCache;
 import com.github.devjake123.jakeseconomy.client.ClientBalanceCache;
 import com.github.devjake123.jakeseconomy.client.ClientMarketListingCache;
 import com.github.devjake123.jakeseconomy.client.network.MarketPacketSender;
@@ -491,17 +492,9 @@ public class AuctionScreen extends Screen {
         int listBottom = guiTop + panelHeight - 4;
         int invVisible = Math.max(1, (listBottom - listTop) / 16);
 
-        // Build non-empty inventory slots, excluding items available in the market shop
-        List<Integer> slots = new ArrayList<>();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            if (!inv.getItem(i).isEmpty()) {
-                String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
-                        .getKey(inv.getItem(i).getItem()).toString();
-                if (!ClientMarketListingCache.isMarketItem(itemId)) {
-                    slots.add(i);
-                }
-            }
-        }
+        // Build slots the player is allowed to list — respects whitelist/blacklist/all mode.
+        // Uses the same helper as handleCreateClick so draw and click are always in sync.
+        List<Integer> slots = buildAuctionableSlots(inv);
 
         int maxInvScroll = Math.max(0, slots.size() - invVisible);
         if (invScrollOffset > maxInvScroll) invScrollOffset = maxInvScroll;
@@ -533,8 +526,7 @@ public class AuctionScreen extends Screen {
             rowY += 16;
         }
         if (slots.isEmpty()) {
-            g.drawString(font, "No listable items.", listX + 2, listTop + 30, 0xFF555555);
-            g.drawString(font, "(Market items excluded)", listX + 2, listTop + 42, 0xFF444444);
+            g.drawString(font, "No items in inventory.", listX + 2, listTop + 30, 0xFF555555);
         }
 
         // Right: config panel
@@ -786,16 +778,7 @@ public class AuctionScreen extends Screen {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return false;
         var inv = mc.player.getInventory();
-        List<Integer> slots = new ArrayList<>();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            if (!inv.getItem(i).isEmpty()) {
-                String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
-                        .getKey(inv.getItem(i).getItem()).toString();
-                if (!ClientMarketListingCache.isMarketItem(itemId)) {
-                    slots.add(i);
-                }
-            }
-        }
+        List<Integer> slots = buildAuctionableSlots(inv);
 
         // Inventory click
         int listX = cx + 2; int listW = cw / 2 - 4;
@@ -931,8 +914,7 @@ public class AuctionScreen extends Screen {
             Minecraft mc = Minecraft.getInstance();
             if (mc.player != null) {
                 var inv = mc.player.getInventory();
-                int totalSlots = 0;
-                for (int i = 0; i < inv.getContainerSize(); i++) if (!inv.getItem(i).isEmpty()) totalSlots++;
+                int totalSlots = buildAuctionableSlots(inv).size();
                 int listBottom = guiTop + panelHeight - 4;
                 int invVisible = Math.max(1, (listBottom - (guiTop + 34)) / 16);
                 int maxS = Math.max(0, totalSlots - invVisible);
@@ -946,6 +928,46 @@ public class AuctionScreen extends Screen {
     public boolean isPauseScreen() { return false; }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Builds the list of inventory slot indices the player is allowed to list in
+     * the auction house, based on the server's auction config synced on join.
+     *
+     * Rules applied client-side (server re-validates on create):
+     *   whitelist mode → only items whose ID is in the whitelist are shown
+     *                    (whitelist entries bypass the market-item restriction)
+     *   blacklist mode → items on the blacklist are hidden;
+     *                    market items are also hidden unless allowMarketItems=true
+     *   all mode       → market items are hidden unless allowMarketItems=true
+     *
+     * Using a single shared helper ensures drawCreate and handleCreateClick always
+     * operate on exactly the same list, preventing click-target drift.
+     */
+    private static List<Integer> buildAuctionableSlots(net.minecraft.world.entity.player.Inventory inv) {
+        List<Integer> slots = new ArrayList<>();
+        String mode = ClientAuctionConfigCache.mode();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            net.minecraft.world.item.ItemStack stack = inv.getItem(i);
+            if (stack.isEmpty()) continue;
+            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            if ("whitelist".equals(mode)) {
+                // Whitelist mode: only show items explicitly on the whitelist.
+                // Being on the whitelist overrides the market-item restriction.
+                if (ClientAuctionConfigCache.isWhitelisted(itemId)) slots.add(i);
+            } else if ("blacklist".equals(mode)) {
+                if (ClientAuctionConfigCache.isBlacklisted(itemId)) continue;
+                if (!ClientAuctionConfigCache.allowMarketItems()
+                        && ClientMarketListingCache.isMarketItem(itemId)) continue;
+                slots.add(i);
+            } else {
+                // "all" mode
+                if (!ClientAuctionConfigCache.allowMarketItems()
+                        && ClientMarketListingCache.isMarketItem(itemId)) continue;
+                slots.add(i);
+            }
+        }
+        return slots;
+    }
 
     private List<ClientAuctionCache.AuctionDto> getDisplayList() {
         String myIdStr = minecraft != null && minecraft.player != null

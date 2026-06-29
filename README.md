@@ -23,6 +23,15 @@ Players buy and sell items through an in-game market whose prices shift in real 
 
 ---
 
+## Integrations
+
+### CobbleDollars (Optional)
+
+Jake's Economy includes native integration with the [CobbleDollars](https://modrinth.com/mod/cobbledollars) mod — both mods sync their currency values automatically when installed together. (1.2.1+ required for CobbleDollars integration)
+
+
+---
+
 ## Features
 
 | Feature | Description |

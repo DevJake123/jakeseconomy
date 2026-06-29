@@ -4,14 +4,17 @@ import com.github.devjake123.jakeseconomy.client.screen.MarketScreen;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyConfigManager;
 import com.github.devjake123.jakeseconomy.config.JakesEconomyPriceConfig;
 import com.github.devjake123.jakeseconomy.network.AdvancementLockSyncPayload;
+import com.github.devjake123.jakeseconomy.network.AuctionConfigSyncPayload;
 import com.github.devjake123.jakeseconomy.network.AuctionClaimReadyPayload;
 import com.github.devjake123.jakeseconomy.network.AuctionDeltaSyncPayload;
 import com.github.devjake123.jakeseconomy.network.AuctionListSyncPayload;
 import com.github.devjake123.jakeseconomy.network.BalanceSyncPayload;
+import com.github.devjake123.jakeseconomy.network.GuiVisibilitySyncPayload;
 import com.github.devjake123.jakeseconomy.network.MarketListingSyncPayload;
 import com.github.devjake123.jakeseconomy.network.PriceConfigSyncPayload;
 import com.github.devjake123.jakeseconomy.network.PriceHistoryResponsePayload;
 import com.github.devjake123.jakeseconomy.network.TransactionHistoryPayload;
+import com.github.devjake123.jakeseconomy.network.OpenScreenPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -54,6 +57,8 @@ public class JakesEconomyClient implements ClientModInitializer {
 			ClientMarketListingCache.clear();
 			ClientAuctionCache.clear();
 			ClientPriceHistoryCache.clear();
+			ClientGuiVisibilityCache.set(true, true, true, true, true); // reset to defaults
+			ClientAuctionConfigCache.reset();
 		});
 
 		// Receive the server's price config and apply it so the market GUI shows the correct items
@@ -63,6 +68,21 @@ public class JakesEconomyClient implements ClientModInitializer {
 				JakesEconomyConfigManager.setPrices(config);
 			}
 		});
+
+		// Receive GUI visibility settings from the server config
+		ClientPlayNetworking.registerGlobalReceiver(GuiVisibilitySyncPayload.TYPE, (payload, context) ->
+				ClientGuiVisibilityCache.set(
+						payload.showMarketTab(),
+						payload.showWithdrawTab(),
+						payload.showHistoryTab(),
+						payload.showAuctionTab(),
+						payload.allowHotkeyOpen())
+		);
+
+		// Receive auction item-filter config from the server
+		ClientPlayNetworking.registerGlobalReceiver(AuctionConfigSyncPayload.TYPE, (payload, context) ->
+				ClientAuctionConfigCache.update(payload.json())
+		);
 
 		// Receive live price + trend data from the server and cache it for the GUI
 		ClientPlayNetworking.registerGlobalReceiver(MarketListingSyncPayload.TYPE, (payload, context) ->
@@ -89,6 +109,14 @@ public class JakesEconomyClient implements ClientModInitializer {
 				ClientAuctionCache.setHasClaims(payload.hasClaims())
 		);
 
+		ClientPlayNetworking.registerGlobalReceiver(OpenScreenPayload.TYPE, (payload, context) -> {
+			if (payload.screen().equals("market")) {
+				context.client().setScreen(new MarketScreen());
+			} else if (payload.screen().equals("auction")) {
+				context.client().setScreen(new com.github.devjake123.jakeseconomy.client.screen.AuctionScreen(null));
+			}
+		});
+
 		// Register the keybind in Minecraft's controls menu
 		OPEN_MARKET_KEY = KeyBindingHelper.registerKeyBinding(new KeyMapping(
 				"key.jakeseconomy.open_market",   // translation key
@@ -98,7 +126,8 @@ public class JakesEconomyClient implements ClientModInitializer {
 
 		// Each client tick, check if the key was just pressed
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			if (OPEN_MARKET_KEY.consumeClick() && client.screen == null) {
+			if (OPEN_MARKET_KEY.consumeClick() && client.screen == null
+					&& ClientGuiVisibilityCache.allowHotkeyOpen()) {
 				client.setScreen(new MarketScreen());
 			}
 		});
